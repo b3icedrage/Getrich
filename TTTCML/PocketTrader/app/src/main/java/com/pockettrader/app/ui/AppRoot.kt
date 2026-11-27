@@ -337,7 +337,7 @@ fun StrategyEditor(engine: TradingEngine) {
         }
         Text(cfg.type.description, fontSize = 12.sp, color = Color.Gray)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            ExpiryPicker(cfg.timeframeSec, listOf(60, 300, 900), "Candles") { engine.updateStrategy(cfg.copy(timeframeSec = it)) }
+            ExpiryPicker(cfg.timeframeSec, listOf(15, 30, 60, 300, 900), "Candles") { engine.updateStrategy(cfg.copy(timeframeSec = it)) }
             ExpiryPicker(cfg.higherTimeframeSec, listOf(300, 900, 1800, 3600, 14400), "Trend TF") { engine.updateStrategy(cfg.copy(higherTimeframeSec = it)) }
         }
         ExpiryPicker(cfg.expirySec, label = "Trade expiry") { engine.updateStrategy(cfg.copy(expirySec = it)) }
