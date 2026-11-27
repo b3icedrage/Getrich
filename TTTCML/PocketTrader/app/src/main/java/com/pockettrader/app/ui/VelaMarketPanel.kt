@@ -22,6 +22,7 @@ import kotlin.math.min
 
 private enum class MarketView { CHART, DOM }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VelaMarketPanel(candles: List<Candle>, asset: String, timeframeSec: Int) {
     var view by remember { mutableStateOf(MarketView.CHART) }
