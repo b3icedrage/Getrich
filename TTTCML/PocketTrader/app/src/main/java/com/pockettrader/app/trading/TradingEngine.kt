@@ -633,8 +633,13 @@ class TradingEngine(context: Context) {
             connState.value != ConnState.CONNECTED -> "not connected"
             (synchronized(lock) { marketTickAtMs[sig.asset] ?: 0L }).let { it <= 0L || System.currentTimeMillis() - it > MAX_TICK_AGE_MS } -> "live quote for ${sig.asset} is stale"
             riskManager.isLate(sig.entryAtSec, client.serverNowSec()) -> "signal late (> ${_risk.value.maxSignalDelaySec}s)"
-            payout != null && payout < cfg.minPayout -> "payout $payout% < ${cfg.minPayout}%"
-            else -> riskManager.blockReason(dayKey())
+            payout == null -> "payout data unavailable for ${sig.asset}"
+            payout < cfg.minPayout -> "payout $payout% < ${cfg.minPayout}%"
+            calculatedAutoStake() == null -> autoStakeBlockMessage()
+            else -> {
+                riskManager.config = _risk.value.copy(stake = calculatedAutoStake()!!)
+                riskManager.blockReason(dayKey())
+            }
         }
     }
 
@@ -647,13 +652,34 @@ class TradingEngine(context: Context) {
             if (riskLimitHit(block)) setAuto(false, block)
             return
         }
-        val err = place(sig.asset, _risk.value.stake, sig.direction, sig.expirySec, TradeSource.AUTO, sig.id)
+        val stake = calculatedAutoStake() ?: run {
+            _autoStatus.value = autoStakeBlockMessage()
+            log("Autotrader skipped signal #${sig.id}: ${autoStakeBlockMessage()}")
+            return
+        }
+        val err = place(sig.asset, stake, sig.direction, sig.expirySec, TradeSource.AUTO, sig.id)
         if (err != null) {
             _autoStatus.value = "Order failed: $err"
             log("Autotrader order error: $err")
         } else {
             _autoStatus.value = "Placed ${sig.direction.label} ${sig.asset} from live-feed signal"
         }
+    }
+
+    private fun calculatedAutoStake(): Double? {
+        val currentBalance = _balance.value ?: return null
+        if (!currentBalance.isFinite() || currentBalance <= 0.0) return null
+        val amount = currentBalance * (_risk.value.stakePercent / 100.0)
+        return amount.takeIf { it.isFinite() && it >= _risk.value.minimumStake }
+    }
+
+    private fun autoStakeBlockMessage(): String {
+        val currentBalance = _balance.value
+            ?: return "Waiting for the broker balance before calculating the percentage stake."
+        val amount = currentBalance * (_risk.value.stakePercent / 100.0)
+        return if (amount < _risk.value.minimumStake)
+            "Calculated ${_risk.value.stakePercent}% stake (${"%.2f".format(amount)}) is below the broker minimum ${"%.2f".format(_risk.value.minimumStake)}; no trade placed."
+        else "Could not calculate a valid percentage stake; no trade placed."
     }
 
     private companion object { const val MAX_TICK_AGE_MS = 15_000L; const val MAX_TT_SIGNAL_AGE_MS = 15_000L }
