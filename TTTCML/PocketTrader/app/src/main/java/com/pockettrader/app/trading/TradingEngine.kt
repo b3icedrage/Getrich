@@ -5,6 +5,7 @@ import com.pockettrader.app.Notifier
 import com.pockettrader.app.TradingService
 import com.pockettrader.app.data.SecureStore
 import com.pockettrader.app.protocol.Candle
+import com.pockettrader.app.analytics.analyseTechnicalMarket
 import org.json.JSONObject
 import com.pockettrader.app.protocol.Asset
 import com.pockettrader.app.protocol.ConnState
@@ -409,6 +410,11 @@ class TradingEngine(context: Context) {
             val ltfCandles = signalEngine.ltf.candles
             val htfCandles = signalEngine.htf.candles + listOfNotNull(signalEngine.htf.forming)
             val decision = Strategies.consensus(cfg, ltfCandles, htfCandles) ?: return@synchronized null
+            val technical = analyseTechnicalMarket(ltfCandles)
+            if (technical.direction != decision.direction) {
+                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
+                return@synchronized null
+            }
             Signal(
                 id = System.currentTimeMillis(),
                 asset = sym,
@@ -434,6 +440,11 @@ class TradingEngine(context: Context) {
     // ---------------- signals & autotrader ----------------
 
     private fun onSignal(sig: Signal) {
+        val technical = synchronized(lock) { analyseTechnicalMarket(signalEngine.ltf.candles) }
+        if (technical.direction != sig.direction) {
+            log("Signal filtered: technical confluence does not confirm ${sig.direction.label} on ${sig.asset}; analysis says ${technical.label}")
+            return
+        }
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}): ${sig.reason}")
