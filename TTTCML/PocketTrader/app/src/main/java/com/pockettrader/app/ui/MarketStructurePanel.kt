@@ -131,7 +131,7 @@ fun MarketStructurePanel(candles: List<Candle>, asset: String, timeframeSec: Int
                             val y30 = size.height * 0.7f
                             drawLine(Color(0xFF8A6D3B), Offset(0f, y70), Offset(size.width, y70), 1f)
                             drawLine(Color(0xFF8A6D3B), Offset(0f, y30), Offset(size.width, y30), 1f)
-                            val y = size.height * (1f - (rsi / 100f))
+                            val y = size.height * (1f - (rsi / 100.0).toFloat())
                             drawLine(Color(0xFFB58CFF), Offset(0f, y), Offset(size.width, y), 2.5f)
                         }
                     }
