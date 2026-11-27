@@ -177,6 +177,8 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val lastTick by engine.lastTickAtMs.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
+    val candles by engine.candleHistory.collectAsStateWithLifecycle()
+    val strategy by engine.strategy.collectAsStateWithLifecycle()
     var amount by rememberSaveable { mutableStateOf("1") }
     var expiry by rememberSaveable { mutableStateOf(60) }
     var filter by rememberSaveable { mutableStateOf("") }
@@ -229,6 +231,7 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
 
             }
         }
+        VelaMarketPanel(candles = candles, asset = asset, timeframeSec = strategy.timeframeSec)
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Amount") },
