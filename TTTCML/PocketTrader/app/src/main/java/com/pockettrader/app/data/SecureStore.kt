@@ -31,6 +31,17 @@ class SecureStore(context: Context) {
         }
     }
 
+    /** NVIDIA API credentials are encrypted with Android Keystore-backed preferences. */
+    fun saveNvidiaApiKey(key: String) {
+        secure.edit().putString("nvidia_api_key", key.trim()).apply()
+    }
+
+    fun loadNvidiaApiKey(): String = secure.getString("nvidia_api_key", "") ?: ""
+
+    fun clearNvidiaApiKey() {
+        secure.edit().remove("nvidia_api_key").apply()
+    }
+
     fun saveSession(s: SessionInfo) {
         val p = if (s.isDemo) "demo" else "real"
         secure.edit()
