@@ -226,14 +226,15 @@ class TradingEngine(context: Context) {
     }
 
     fun updateStrategy(c: StrategyConfig) {
+        val safe = c.copy(minPayout = c.minPayout.coerceIn(70, 100))
         val old = _strategy.value
-        _strategy.value = c; store.saveStrategy(c)
+        _strategy.value = safe; store.saveStrategy(safe)
         synchronized(lock) {
-            signalEngine.reconfigure(c)
-            marketEngines.values.forEach { it.reconfigure(c); it.minConfluenceScore = _minConfluence.value }
+            signalEngine.reconfigure(safe)
+            marketEngines.values.forEach { it.reconfigure(safe); it.minConfluenceScore = _minConfluence.value }
         }
-        if (old.timeframeSec != c.timeframeSec || old.higherTimeframeSec != c.higherTimeframeSec) {
-            client.watch(_asset.value, c.timeframeSec); requestHistory()
+        if (old.timeframeSec != safe.timeframeSec || old.higherTimeframeSec != safe.higherTimeframeSec) {
+            client.watch(_asset.value, safe.timeframeSec); requestHistory()
         }
     }
 
@@ -361,7 +362,7 @@ class TradingEngine(context: Context) {
             adxRange = st.optDouble("adxRange", d.adxRange).coerceIn(5.0, 40.0),
             emaFast = st.optInt("emaFast", d.emaFast).coerceIn(2, 100),
             emaSlow = st.optInt("emaSlow", d.emaSlow).coerceIn(3, 200),
-            minPayout = st.optInt("minPayout", d.minPayout).coerceIn(0, 100),
+            minPayout = st.optInt("minPayout", d.minPayout).coerceIn(70, 100),
             adaptiveMinRegimeConfidence = st.optDouble("adaptiveMinRegimeConfidence", d.adaptiveMinRegimeConfidence).coerceIn(0.1, 1.0),
             adaptiveMaxTailProbability = st.optDouble("adaptiveMaxTailProbability", d.adaptiveMaxTailProbability).coerceIn(0.001, 0.5)
         )
