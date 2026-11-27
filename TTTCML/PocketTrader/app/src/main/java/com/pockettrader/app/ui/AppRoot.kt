@@ -572,25 +572,44 @@ fun NumField(label: String, value: Double, onChange: (Double) -> Unit) {
 
 // ---------------------------------------------------------------- Auto
 @Composable
-fun TTScreen(engine: TradingEngine) {
+fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val watched by engine.ttSignals.collectAsStateWithLifecycle()
+    val eligibleSignals by engine.signals.collectAsStateWithLifecycle()
     val threshold by engine.minConfluence.collectAsStateWithLifecycle()
+    val account by engine.account.collectAsStateWithLifecycle()
+    val risk by engine.risk.collectAsStateWithLifecycle()
+    var confirmReal by remember { mutableStateOf<Signal?>(null) }
     val minimumShown = (threshold - 10).coerceAtLeast(40)
     val ranked = watched.filter { it.confluenceScore >= minimumShown }
         .sortedWith(compareByDescending<Signal> { it.confluenceScore }.thenByDescending { it.emittedAtMs })
+
+    confirmReal?.let { signal ->
+        AlertDialog(
+            onDismissRequest = { confirmReal = null },
+            title = { Text("Confirm REAL trade") },
+            text = { Text("Place ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} on ${signal.asset}, stake ${ "%.2f".format(risk.stake)}, expiry ${expiryLabel(signal.expirySec)} using your REAL balance? This submits an order immediately.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReal = null
+                    engine.placeTtSignalTrade(signal, risk.stake)?.let(onMessage)
+                        ?: onMessage("TT order submitted: ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} ${signal.asset}. Check the Trades log for broker confirmation.")
+                }) { Text("Place REAL trade", color = Red) }
+            },
+            dismissButton = { TextButton(onClick = { confirmReal = null }) { Text("Cancel") } }
+        )
+    }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("TT · TOP SIGNALS", fontWeight = FontWeight.Black, fontSize = 18.sp)
-                Text("Near, matching or above your selected confluence threshold.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text("Tap an eligible signal to place a trade on that pair.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Text("≥ ${minimumShown}%", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Bold)
             }
         }
-        Text("Ranked highest to lowest. Scores are indicator agreement, not win probabilities. Signals below ${threshold}% are watchlist-only and never trigger an order.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+        Text("Ranked highest to lowest. Scores are indicator agreement, not win probabilities. Below ${threshold}% and trade-filtered signals are watch-only. Stake uses your configured risk amount; expiry comes from the signal.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         if (ranked.isEmpty()) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -604,21 +623,35 @@ fun TTScreen(engine: TradingEngine) {
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(ranked, key = { it.id }) { signal ->
                     val qualified = signal.confluenceScore >= threshold
-                    Card(Modifier.fillMaxWidth()) {
+                    val eligible = qualified && eligibleSignals.any { it.id == signal.id }
+                    val buy = signal.direction == Direction.CALL
+                    Card(
+                        Modifier.fillMaxWidth().then(if (eligible) Modifier.clickable {
+                            if (account == AccountType.REAL) confirmReal = signal
+                            else engine.placeTtSignalTrade(signal, risk.stake)?.let(onMessage)
+                                ?: onMessage("TT order submitted: ${if (buy) "BUY" else "SELL"} ${signal.asset}. Check the Trades log for broker confirmation.")
+                        } else Modifier),
+                        colors = CardDefaults.cardColors(containerColor = if (eligible) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
                         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(shape = RoundedCornerShape(10.dp),
-                                color = if (signal.direction == Direction.CALL) Color(0xFF17483F) else Color(0xFF5B252B)) {
-                                Text(if (signal.direction == Direction.CALL) "CALL" else "PUT",
-                                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp), color = Color.White, fontWeight = FontWeight.Bold)
+                                color = if (buy) Color(0xFF17483F) else Color(0xFF5B252B)) {
+                                Text(if (buy) "BUY" else "SELL",
+                                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp), color = Color.White, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(signal.asset, fontWeight = FontWeight.Bold)
                                 Text("${signal.strategy.label} · ${expiryLabel(signal.expirySec)}",
                                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(if (qualified) "MEETS THRESHOLD" else "NEAR THRESHOLD · WATCH ONLY",
+                                Text(
+                                    when {
+                                        eligible -> "TAP TO TRADE · ${account.name}"
+                                        qualified -> "MEETS SCORE · TRADE FILTERED"
+                                        else -> "NEAR THRESHOLD · WATCH ONLY"
+                                    },
                                     fontSize = 10.sp, fontWeight = FontWeight.Bold,
-                                    color = if (qualified) Green else Color(0xFFB7791F))
+                                    color = if (eligible) Green else Color(0xFFB7791F))
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text("${signal.confluenceScore}%", fontSize = 23.sp, fontWeight = FontWeight.Black,
@@ -632,7 +665,6 @@ fun TTScreen(engine: TradingEngine) {
         }
     }
 }
-
 @Composable
 fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val auto by engine.autoEnabled.collectAsStateWithLifecycle()
