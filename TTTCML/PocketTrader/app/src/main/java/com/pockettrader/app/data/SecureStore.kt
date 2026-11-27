@@ -121,7 +121,8 @@ class SecureStore(context: Context) {
     }
 
     fun saveRisk(r: RiskConfig) {
-        plain.edit().putFloat("rk_stake", r.stake.toFloat()).putFloat("rk_pct", r.stakePercent.toFloat()).putFloat("rk_min", r.minimumStake.toFloat()).putInt("rk_max", r.maxTradesPerSession)
+        plain.edit().putFloat("rk_stake", r.stake.toFloat()).putFloat("rk_pct", r.stakePercent.toFloat()).putFloat("rk_min", r.minimumStake.toFloat())
+            .putInt("rk_start", r.sessionStartHour).putInt("rk_end", r.sessionEndHour).putInt("rk_max", r.maxTradesPerSession)
             .putFloat("rk_sl", r.dailyStopLoss.toFloat()).putFloat("rk_tp", r.dailyTakeProfit.toFloat())
             .putInt("rk_cl", r.maxConsecutiveLosses).putInt("rk_open", r.maxOpenTrades).putInt("rk_delay", r.maxSignalDelaySec).apply()
     }
@@ -132,6 +133,8 @@ class SecureStore(context: Context) {
             stake = plain.getFloat("rk_stake", d.stake.toFloat()).toDouble(),
             stakePercent = plain.getFloat("rk_pct", d.stakePercent.toFloat()).toDouble().coerceIn(0.1, 5.0),
             minimumStake = plain.getFloat("rk_min", d.minimumStake.toFloat()).toDouble().coerceAtLeast(0.1),
+            sessionStartHour = plain.getInt("rk_start", d.sessionStartHour).coerceIn(0, 23),
+            sessionEndHour = plain.getInt("rk_end", d.sessionEndHour).coerceIn(0, 23),
             maxTradesPerSession = plain.getInt("rk_max", d.maxTradesPerSession),
             dailyStopLoss = plain.getFloat("rk_sl", d.dailyStopLoss.toFloat()).toDouble(),
             dailyTakeProfit = plain.getFloat("rk_tp", d.dailyTakeProfit.toFloat()).toDouble(),
