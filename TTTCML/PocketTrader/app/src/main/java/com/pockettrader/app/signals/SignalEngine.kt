@@ -72,8 +72,10 @@ class SignalEngine(cfg: StrategyConfig) {
             minScore = (minConfluenceScore - 10).coerceAtLeast(40)
         )
         val direction = analysis.recommendation ?: return null
+        val entryBlock = SmartEntryRules.rejection(ltf.candles, htfCandles, direction)
+        if (entryBlock != null) return null
         val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
-        val reason = "Market-wide indicator scan | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
+        val reason = "Smart entry confirmed (EMA200 + MACD cross + RSI divergence + S/R rejection) | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
         val score = if (direction == Direction.CALL) analysis.callScore else analysis.putScore
         return Signal(globalSignalIds.getAndIncrement(), asset, direction, config.type, reason,
             closed.startSec + config.timeframeSec, config.expirySec, nowMs, score)
