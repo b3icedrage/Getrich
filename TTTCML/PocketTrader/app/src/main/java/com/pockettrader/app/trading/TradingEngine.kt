@@ -52,9 +52,21 @@ data class TradeRecord(
     val status: TradeStatus = TradeStatus.PENDING,
     val netProfit: Double? = null,
     val note: String? = null,
+    val entryPrice: Double? = null,
 )
 
 data class LogLine(val timeMs: Long, val text: String)
+
+data class SignalAuditRecord(
+    val signal: Signal,
+    val account: AccountType,
+    val emittedPrice: Double?,
+    val entryPrice: Double? = null,
+    val expiryAtMs: Long? = null,
+    val brokerResult: TradeStatus = TradeStatus.UNKNOWN,
+    val netReturn: Double? = null,
+    val tradeRequestId: String? = null,
+)
 
 /**
  * App-wide trading core: one live session (demo or real), the selected asset's price feed,
@@ -81,6 +93,9 @@ class TradingEngine(context: Context) {
     private val _pendingSignal = MutableStateFlow<Signal?>(null); val pendingSignal: StateFlow<Signal?> = _pendingSignal
     private val _minConfluence = MutableStateFlow(store.loadMinConfluence()); val minConfluence: StateFlow<Int> = _minConfluence
     private val _trades = MutableStateFlow<List<TradeRecord>>(emptyList()); val trades: StateFlow<List<TradeRecord>> = _trades
+    private val _signalJournal = MutableStateFlow<List<SignalAuditRecord>>(emptyList())
+    val signalJournal: StateFlow<List<SignalAuditRecord>> = _signalJournal
+    private val claimedSignalIds = LinkedHashSet<Long>()
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList()); val logs: StateFlow<List<LogLine>> = _logs
     private val _strategy = MutableStateFlow(store.loadStrategy()); val strategy: StateFlow<StrategyConfig> = _strategy
     private val _risk = MutableStateFlow(store.loadRisk()); val risk: StateFlow<RiskConfig> = _risk
@@ -527,11 +542,13 @@ class TradingEngine(context: Context) {
                 entryAtSec = client.serverNowSec().toLong(),
                 expirySec = cfg.expirySec,
                 emittedAtMs = System.currentTimeMillis(),
-                confluenceScore = if (decision.direction == Direction.CALL) confluence.callScore else confluence.putScore
+                confluenceScore = if (decision.direction == Direction.CALL) confluence.callScore else confluence.putScore,
+                referencePrice = _price.value
             )
         } ?: return null
         _ttSignals.update { (listOf(result) + it).distinctBy { item -> item.id }.take(100) }
         _signals.update { (listOf(result) + it).take(100) }
+        recordSignal(result)
         log("Manual signal generated: ${result.direction.label} ${result.asset} (${result.strategy.label})")
         return result
     }
@@ -597,15 +614,7 @@ class TradingEngine(context: Context) {
             log("TT watchlist: ${sig.asset} ${sig.direction.label} at ${sig.confluenceScore}% is near the ${_minConfluence.value}% threshold; no order placed")
             return
         }
-        val technical = synchronized(lock) {
-            val candles = marketEngines[sig.asset]?.ltf?.candles
-                ?: if (sig.asset == _asset.value) signalEngine.ltf.candles else emptyList()
-            analyseTechnicalMarket(candles)
-        }
-        if (technical.direction != sig.direction) {
-            log("TT candidate shown; trade filtered because technical analysis says ${technical.label} on ${sig.asset}")
-            return
-        }
+        // Signal discovery is independent; order eligibility is decided by validateOrder().
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}) at ${sig.confluenceScore}% confluence: ${sig.reason}")
