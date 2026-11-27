@@ -4,6 +4,8 @@ import android.content.Context
 import com.pockettrader.app.Notifier
 import com.pockettrader.app.TradingService
 import com.pockettrader.app.data.SecureStore
+import com.pockettrader.app.protocol.Candle
+import org.json.JSONObject
 import com.pockettrader.app.protocol.Asset
 import com.pockettrader.app.protocol.ConnState
 import com.pockettrader.app.protocol.Deal
@@ -93,6 +95,13 @@ class TradingEngine(context: Context) {
     private val signalEngine = SignalEngine(_strategy.value)
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
     private val _lastTickAtMs = MutableStateFlow(0L)
+    val lastTickAtMs: StateFlow<Long> = _lastTickAtMs
+    private val _priceHistory = MutableStateFlow<List<Pair<Long, Double>>>(emptyList())
+    val priceHistory: StateFlow<List<Pair<Long, Double>>> = _priceHistory
+    private val _candleHistory = MutableStateFlow<List<Candle>>(emptyList())
+    val candleHistory: StateFlow<List<Candle>> = _candleHistory
+    private var lastOrderFingerprint = ""
+    private var lastOrderAtMs = 0L
 
     init {
         scope.launch { client.events.collect { onEvent(it) } }
@@ -132,6 +141,7 @@ class TradingEngine(context: Context) {
         val s = store.loadSession(demo) ?: return "No ${if (demo) "demo" else "real"} session saved. Sign in on the Account tab first."
         if (s.isDemo != demo) return "Saved session type does not match the selected account"
         signalEngine.reset(); _price.value = null; _balance.value = null; _lastTickAtMs.value = 0L
+        _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
         client.watch(_asset.value, _strategy.value.timeframeSec)
         client.connect(s)
         return null
@@ -161,6 +171,7 @@ class TradingEngine(context: Context) {
         _asset.value = symbol; store.lastAsset = symbol
         _price.value = null
         _lastTickAtMs.value = 0L
+        _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
         signalEngine.reset()
         client.watch(symbol, _strategy.value.timeframeSec)
         requestHistory()
@@ -235,6 +246,94 @@ class TradingEngine(context: Context) {
         _chatMessages.value = listOf(ChatMessage("assistant", "Chat cleared. What would you like to explore?"))
     }
 
+    fun exportTradesCsv(): String {
+        val rows = _trades.value.asReversed()
+        val header = "request_id,deal_id,asset,direction,amount,expiry_seconds,account,source,placed_at,status,net_profit,note"
+        fun csv(v: Any?): String = "\"" + (v?.toString() ?: "").replace("\"", "\"\"") + "\""
+        return (listOf(header) + rows.map { t ->
+            listOf(t.requestId, t.dealId, t.asset, t.direction.label, t.amount, t.expirySec,
+                if (t.isDemo) "DEMO" else "REAL", t.source, t.placedAtMs, t.status, t.netProfit, t.note)
+                .joinToString(",") { csv(it) }
+        }).joinToString("\n")
+    }
+
+    /** Backup excludes Pocket Option sessions, passwords and NVIDIA API credentials. */
+    fun settingsBackupJson(): String {
+        val c = _strategy.value; val r = _risk.value
+        val st = JSONObject()
+            .put("type", c.type.name).put("timeframeSec", c.timeframeSec).put("higherTimeframeSec", c.higherTimeframeSec)
+            .put("expirySec", c.expirySec).put("htfEmaPeriod", c.htfEmaPeriod).put("trendTrigger", c.trendTrigger.name)
+            .put("pullbackEma", c.pullbackEma).put("pullbackLookback", c.pullbackLookback)
+            .put("macdFast", c.macdFast).put("macdSlow", c.macdSlow).put("macdSignal", c.macdSignal)
+            .put("supertrendPeriod", c.supertrendPeriod).put("supertrendMult", c.supertrendMult)
+            .put("bbPeriod", c.bbPeriod).put("bbK", c.bbK).put("rsiPeriod", c.rsiPeriod)
+            .put("rsiOversold", c.rsiOversold).put("rsiOverbought", c.rsiOverbought)
+            .put("donchianPeriod", c.donchianPeriod).put("volumeAvgPeriod", c.volumeAvgPeriod)
+            .put("volumeMult", c.volumeMult).put("requireVolume", c.requireVolume)
+            .put("sweepLookback", c.sweepLookback).put("adxPeriod", c.adxPeriod)
+            .put("adxTrend", c.adxTrend).put("adxRange", c.adxRange).put("emaFast", c.emaFast)
+            .put("emaSlow", c.emaSlow).put("minPayout", c.minPayout)
+            .put("adaptiveMinRegimeConfidence", c.adaptiveMinRegimeConfidence)
+            .put("adaptiveMaxTailProbability", c.adaptiveMaxTailProbability)
+        val rk = JSONObject().put("stake", r.stake).put("maxTradesPerSession", r.maxTradesPerSession)
+            .put("dailyStopLoss", r.dailyStopLoss).put("dailyTakeProfit", r.dailyTakeProfit)
+            .put("maxConsecutiveLosses", r.maxConsecutiveLosses).put("maxOpenTrades", r.maxOpenTrades)
+            .put("maxSignalDelaySec", r.maxSignalDelaySec)
+        return JSONObject().put("schemaVersion", 1).put("strategy", st).put("risk", rk).toString(2)
+    }
+
+    fun restoreSettingsBackup(raw: String): String? = try {
+        val root = JSONObject(raw)
+        require(root.optInt("schemaVersion") == 1) { "Unsupported backup version" }
+        val st = root.getJSONObject("strategy"); val d = _strategy.value
+        val strategy = d.copy(
+            type = com.pockettrader.app.signals.StrategyType.valueOf(st.optString("type", d.type.name)),
+            timeframeSec = st.optInt("timeframeSec", d.timeframeSec).coerceIn(15, 900),
+            higherTimeframeSec = st.optInt("higherTimeframeSec", d.higherTimeframeSec).coerceIn(60, 3600),
+            expirySec = st.optInt("expirySec", d.expirySec).coerceIn(5, 3600),
+            htfEmaPeriod = st.optInt("htfEmaPeriod", d.htfEmaPeriod).coerceIn(2, 500),
+            trendTrigger = com.pockettrader.app.signals.TrendTrigger.valueOf(st.optString("trendTrigger", d.trendTrigger.name)),
+            pullbackEma = st.optInt("pullbackEma", d.pullbackEma).coerceIn(2, 200),
+            pullbackLookback = st.optInt("pullbackLookback", d.pullbackLookback).coerceIn(1, 100),
+            macdFast = st.optInt("macdFast", d.macdFast).coerceIn(2, 100),
+            macdSlow = st.optInt("macdSlow", d.macdSlow).coerceIn(3, 200),
+            macdSignal = st.optInt("macdSignal", d.macdSignal).coerceIn(2, 100),
+            supertrendPeriod = st.optInt("supertrendPeriod", d.supertrendPeriod).coerceIn(2, 100),
+            supertrendMult = st.optDouble("supertrendMult", d.supertrendMult).coerceIn(0.5, 10.0),
+            bbPeriod = st.optInt("bbPeriod", d.bbPeriod).coerceIn(5, 100),
+            bbK = st.optDouble("bbK", d.bbK).coerceIn(0.5, 5.0),
+            rsiPeriod = st.optInt("rsiPeriod", d.rsiPeriod).coerceIn(2, 100),
+            rsiOversold = st.optDouble("rsiOversold", d.rsiOversold).coerceIn(1.0, 49.0),
+            rsiOverbought = st.optDouble("rsiOverbought", d.rsiOverbought).coerceIn(51.0, 99.0),
+            donchianPeriod = st.optInt("donchianPeriod", d.donchianPeriod).coerceIn(5, 100),
+            volumeAvgPeriod = st.optInt("volumeAvgPeriod", d.volumeAvgPeriod).coerceIn(5, 100),
+            volumeMult = st.optDouble("volumeMult", d.volumeMult).coerceIn(0.5, 5.0),
+            requireVolume = st.optBoolean("requireVolume", d.requireVolume),
+            sweepLookback = st.optInt("sweepLookback", d.sweepLookback).coerceIn(5, 100),
+            adxPeriod = st.optInt("adxPeriod", d.adxPeriod).coerceIn(2, 100),
+            adxTrend = st.optDouble("adxTrend", d.adxTrend).coerceIn(10.0, 60.0),
+            adxRange = st.optDouble("adxRange", d.adxRange).coerceIn(5.0, 40.0),
+            emaFast = st.optInt("emaFast", d.emaFast).coerceIn(2, 100),
+            emaSlow = st.optInt("emaSlow", d.emaSlow).coerceIn(3, 200),
+            minPayout = st.optInt("minPayout", d.minPayout).coerceIn(0, 100),
+            adaptiveMinRegimeConfidence = st.optDouble("adaptiveMinRegimeConfidence", d.adaptiveMinRegimeConfidence).coerceIn(0.1, 1.0),
+            adaptiveMaxTailProbability = st.optDouble("adaptiveMaxTailProbability", d.adaptiveMaxTailProbability).coerceIn(0.001, 0.5)
+        )
+        val rk = root.getJSONObject("risk"); val rd = _risk.value
+        val risk = rd.copy(
+            stake = rk.optDouble("stake", rd.stake).coerceIn(0.1, 100000.0),
+            maxTradesPerSession = rk.optInt("maxTradesPerSession", rd.maxTradesPerSession).coerceIn(1, 1000),
+            dailyStopLoss = rk.optDouble("dailyStopLoss", rd.dailyStopLoss).coerceAtLeast(0.0),
+            dailyTakeProfit = rk.optDouble("dailyTakeProfit", rd.dailyTakeProfit).coerceAtLeast(0.0),
+            maxConsecutiveLosses = rk.optInt("maxConsecutiveLosses", rd.maxConsecutiveLosses).coerceIn(0, 100),
+            maxOpenTrades = rk.optInt("maxOpenTrades", rd.maxOpenTrades).coerceIn(1, 10),
+            maxSignalDelaySec = rk.optInt("maxSignalDelaySec", rd.maxSignalDelaySec).coerceIn(1, 30)
+        )
+        updateStrategy(strategy); updateRisk(risk)
+        log("Settings backup restored (sessions and API keys were not changed)")
+        null
+    } catch (e: Exception) { "Could not restore backup: ${e.message ?: "invalid JSON"}" }
+
     private fun onEvent(e: PocketEvent) {
         when (e) {
             is PocketEvent.Log -> log(e.message)
@@ -254,9 +353,11 @@ class TradingEngine(context: Context) {
                     if (t.symbol != sym) continue
                     _price.value = t.price
                     _lastTickAtMs.value = now
+                    _priceHistory.update { (it + (now to t.price)).takeLast(180) }
                     val sig = synchronized(lock) { signalEngine.onTick(sym, t.timeSec, t.price, now) }
                     sig?.let { onSignal(it) }
                 }
+                synchronized(lock) { _candleHistory.value = signalEngine.ltf.candles }
                 _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
             }
             is PocketEvent.Opened -> onOpened(e.deal)
@@ -276,6 +377,7 @@ class TradingEngine(context: Context) {
                 if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
                 else if (candles.isEmpty() && agg.candles.isEmpty() && snap.ticks.isNotEmpty()) agg.seed(emptyList(), snap.ticks)
             }
+            _candleHistory.value = signalEngine.ltf.candles
             _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
             if (c.timeframeSec == snap.period || c.higherTimeframeSec == snap.period)
                 log("History ${snap.asset} ${snap.period}s: ${snap.candles.size} candles, ${snap.ticks.size} ticks")
@@ -406,8 +508,18 @@ class TradingEngine(context: Context) {
     private fun place(asset: String, amount: Double, direction: Direction, expirySec: Int, source: TradeSource, signalId: Long?): String? {
         if (amount <= 0) return "Amount must be above 0"
         if (connState.value != ConnState.CONNECTED) return "Not connected"
+        val now = System.currentTimeMillis()
+        val tickAt = _lastTickAtMs.value
+        if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS) return "Live quote is stale. Wait for a fresh Pocket Option price before ordering."
         val demo = client.isDemo
         if (demo != (_account.value == AccountType.DEMO)) return "Session/account mismatch, reconnect"
+        val fingerprint = "$asset|$amount|$direction|$expirySec|$demo|$source"
+        synchronized(lock) {
+            if (fingerprint == lastOrderFingerprint && now - lastOrderAtMs < 1500L)
+                return "Duplicate order tap blocked. Wait before retrying."
+            lastOrderFingerprint = fingerprint
+            lastOrderAtMs = now
+        }
         val id = client.openOrder(asset, amount, direction, expirySec) ?: return "Could not send order"
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, System.currentTimeMillis())
         _trades.update { (listOf(rec) + it).take(500) }

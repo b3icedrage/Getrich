@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -34,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -52,12 +55,16 @@ import com.pockettrader.app.trading.TradingEngine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 
 private val Green = Color(0xFF2E7D32)
 private val Red = Color(0xFFC62828)
 private val hms = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), CHAT("AI Chat"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
+enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), ANALYTICS("Stats"), CHAT("AI Chat"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,7 +131,7 @@ fun AppRoot(engine: TradingEngine) {
                     NavigationBarItem(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) }, icon = {
                         Icon(when (t) {
                             Tab.TRADE -> Icons.Default.ShowChart; Tab.SIGNALS -> Icons.Default.Notifications
-                            Tab.CHAT -> Icons.Default.Chat; Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
+                            Tab.ANALYTICS -> Icons.Default.Analytics; Tab.CHAT -> Icons.Default.Chat; Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
                         }, null)
                     })
                 }
@@ -140,6 +147,7 @@ fun AppRoot(engine: TradingEngine) {
             when (activeTab) {
                 Tab.TRADE -> TradeScreen(engine) { message = it }
                 Tab.SIGNALS -> SignalsScreen(engine)
+                Tab.ANALYTICS -> AnalyticsScreen(engine)
                 Tab.CHAT -> ChatScreen(engine) { message = it }
                 Tab.AUTO -> AutoScreen(engine) { message = it }
                 Tab.LOG -> LogScreen(engine)
@@ -162,6 +170,7 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val assets by engine.assets.collectAsStateWithLifecycle()
     val asset by engine.selectedAsset.collectAsStateWithLifecycle()
     val price by engine.price.collectAsStateWithLifecycle()
+    val lastTick by engine.lastTickAtMs.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
     var amount by rememberSaveable { mutableStateOf("1") }
@@ -208,8 +217,12 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                     Text(p?.let { "%.5f".format(it) } ?: "Waiting for price…",
                         fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
-                Text(if (conn == ConnState.CONNECTED) "●  Price feed connected" else "○  Waiting for connection",
-                    fontSize = 11.sp, color = if (conn == ConnState.CONNECTED) Color(0xFF58E0C4) else Color(0xFFFFC76A))
+                val age = if (lastTick > 0L) ((System.currentTimeMillis() - lastTick) / 1000L).coerceAtLeast(0L) else null
+                val fresh = age != null && age <= 15L
+                Text(
+                    when { conn != ConnState.CONNECTED -> "○  Disconnected"; fresh -> "●  Live quote · ${age}s ago"; else -> "⚠  Quote stale · orders blocked" },
+                    fontSize = 11.sp, color = if (fresh) Color(0xFF58E0C4) else Color(0xFFFFC76A))
+
             }
         }
         Spacer(Modifier.height(4.dp))
@@ -516,13 +529,101 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         OutlinedButton(onClick = { engine.resetSession() }, modifier = Modifier.padding(top = 6.dp)) { Text("Reset session counters") }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("Risk limits", fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 0.5, maxTradesPerSession = 5, dailyStopLoss = 2.0, dailyTakeProfit = 2.0, maxConsecutiveLosses = 2, maxOpenTrades = 1, maxSignalDelaySec = 2)) }) { Text("Conservative") }
+            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 1.0, maxTradesPerSession = 10, dailyStopLoss = 10.0, dailyTakeProfit = 10.0, maxConsecutiveLosses = 3, maxOpenTrades = 1, maxSignalDelaySec = 3)) }) { Text("Balanced") }
+        }
         NumField("Fixed stake per trade", risk.stake) { engine.updateRisk(risk.copy(stake = it)) }
         NumField("Max trades per session", risk.maxTradesPerSession.toDouble()) { engine.updateRisk(risk.copy(maxTradesPerSession = it.toInt())) }
         NumField("Daily stop-loss (0 = off)", risk.dailyStopLoss) { engine.updateRisk(risk.copy(dailyStopLoss = it)) }
         NumField("Daily take-profit (0 = off)", risk.dailyTakeProfit) { engine.updateRisk(risk.copy(dailyTakeProfit = it)) }
-        NumField("Max consecutive losses (0 = off)", risk.maxConsecutiveLosses.toDouble()) { engine.updateRisk(risk.copy(maxConsecutiveLosses = it.toInt())) }
+        NumField("Max consecutive losses (0 = off)", risk.maxConsecutiveLosses.toDouble()) { engine.updateRisk(risk.copy(maxConsecutiveLosses = it.toInt().coerceAtLeast(0))) }
+        NumField("Max simultaneous open trades", risk.maxOpenTrades.toDouble()) { engine.updateRisk(risk.copy(maxOpenTrades = it.toInt().coerceIn(1, 10))) }
         NumField("Skip signals later than (seconds)", risk.maxSignalDelaySec.toDouble()) { engine.updateRisk(risk.copy(maxSignalDelaySec = it.toInt())) }
         Text("The autotrader trades one position at a time on the selected asset, skips assets under the minimum payout, and stops itself when a limit is hit. Open binary options cannot be closed early; STOP only prevents new trades.", fontSize = 12.sp, color = Color.Gray)
+    }
+}
+
+// ---------------------------------------------------------------- Analytics, chart and research backtests
+@Composable
+fun AnalyticsScreen(engine: TradingEngine) {
+    val context = LocalContext.current
+    val priceHistory by engine.priceHistory.collectAsStateWithLifecycle()
+    val candles by engine.candleHistory.collectAsStateWithLifecycle()
+    val trades by engine.trades.collectAsStateWithLifecycle()
+    val asset by engine.selectedAsset.collectAsStateWithLifecycle()
+    val account by engine.account.collectAsStateWithLifecycle()
+    var payout by rememberSaveable { mutableStateOf("80") }
+    var expiryBars by rememberSaveable { mutableStateOf("1") }
+    val closed = trades.filter { it.isDemo == (account == AccountType.DEMO) && it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
+    val wins = closed.count { it.status == TradeStatus.WIN }
+    val losses = closed.count { it.status == TradeStatus.LOSS }
+    val net = closed.sumOf { it.netProfit ?: 0.0 }
+    val reports = remember(candles, payout, expiryBars) {
+        com.pockettrader.app.analytics.BacktestEngine.compare(candles, payout.toDoubleOrNull() ?: 80.0, expiryBars.toIntOrNull() ?: 1)
+    }
+    Column(Modifier.fillMaxSize().padding(14.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("PERFORMANCE · ${account.name}", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MetricCard("Closed", closed.size.toString(), Modifier.weight(1f))
+            MetricCard("Win rate", if (closed.isEmpty()) "—" else "${"%.1f".format(wins * 100.0 / closed.size)}%", Modifier.weight(1f))
+            MetricCard("Net P/L", "%+.2f".format(net), Modifier.weight(1f))
+        }
+        Text("Live price · $asset", fontWeight = FontWeight.Bold)
+        if (priceHistory.size > 1) {
+            Canvas(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFF101D30), RoundedCornerShape(14.dp)).padding(10.dp)) {
+                val vals = priceHistory.map { it.second }
+                val lo = vals.minOrNull() ?: 0.0; val hi = vals.maxOrNull() ?: 1.0
+                val span = (hi - lo).takeIf { it > 0.0 } ?: 1.0
+                val path = Path()
+                vals.forEachIndexed { index, value ->
+                    val x = size.width * index / (vals.size - 1).toFloat()
+                    val y = size.height - ((value - lo) / span * size.height).toFloat()
+                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                drawPath(path, Color(0xFF4DE0C1), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
+            }
+            Text("Last ${priceHistory.size} received ticks · chart is a local price trace, not candlesticks.", fontSize = 11.sp, color = Color.Gray)
+        } else Text("Waiting for enough live ticks to draw the price trace.", fontSize = 12.sp, color = Color.Gray)
+        HorizontalDivider()
+        Text("Historical strategy comparison", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("Uses ${candles.size} loaded closed candles for $asset. Approximate OHLC close-to-close research only; not broker fills or a prediction.", fontSize = 12.sp, color = Color.Gray)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(payout, { payout = it.filter(Char::isDigit).take(3) }, label = { Text("Assumed payout %") },
+                modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(expiryBars, { expiryBars = it.filter(Char::isDigit).take(2) }, label = { Text("Expiry bars") },
+                modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        }
+        reports.forEach { report ->
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(report.strategy.label, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Trades ${report.trades} · Wins ${report.wins} · Losses ${report.losses} · Draws ${report.draws}", fontSize = 12.sp, color = Color.White)
+                    Text("Win rate ${"%.1f".format(report.winRatePct)}% · Net ${"%+.2f".format(report.netUnits)} units · Max DD ${"%.2f".format(report.maxDrawdownUnits)}", fontSize = 12.sp, color = Color(0xFFB7C7DA))
+                    Text("Profit factor ${if (report.profitFactor.isInfinite()) "∞" else "%.2f".format(report.profitFactor)}", fontSize = 11.sp, color = Color(0xFF58E0C4))
+                }
+            }
+        }
+        if (reports.all { it.trades == 0 }) Text("Not enough history or no qualifying setups yet. Load more Pocket Option history before interpreting these results.", fontSize = 12.sp, color = Color.Gray)
+        HorizontalDivider()
+        Text("Export account trade history", fontWeight = FontWeight.Bold)
+        Button(onClick = {
+            val send = Intent(Intent.ACTION_SEND).setType("text/csv")
+                .putExtra(Intent.EXTRA_SUBJECT, "PocketTrader trade history")
+                .putExtra(Intent.EXTRA_TEXT, engine.exportTradesCsv())
+            runCatching { context.startActivity(Intent.createChooser(send, "Export trade history")) }
+        }, modifier = Modifier.fillMaxWidth()) { Text("Share trade history CSV") }
+        Text("Only completed broker-confirmed results count toward the performance metrics. UNKNOWN and pending trades are excluded.", fontSize = 11.sp, color = Color.Gray)
+    }
+}
+
+@Composable
+private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier, colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
+        Column(Modifier.padding(10.dp)) {
+            Text(label, fontSize = 10.sp, color = Color(0xFF91A8C5))
+            Text(value, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        }
     }
 }
 
@@ -583,6 +684,7 @@ fun ChatScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
 // ---------------------------------------------------------------- Log
 @Composable
 fun LogScreen(engine: TradingEngine) {
+    val context = LocalContext.current
     val trades by engine.trades.collectAsStateWithLifecycle()
     val logs by engine.logs.collectAsStateWithLifecycle()
     var showEvents by remember { mutableStateOf(false) }
@@ -590,6 +692,10 @@ fun LogScreen(engine: TradingEngine) {
         val closed = trades.filter { it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
         val wins = closed.count { it.status == TradeStatus.WIN }
         Text("Trades ${trades.size} · Closed ${closed.size} · Wins $wins · Win rate ${if (closed.isEmpty()) "-" else "${wins * 100 / closed.size}%"} · Net ${"%+.2f".format(closed.sumOf { it.netProfit ?: 0.0 })}")
+        OutlinedButton(onClick = {
+            val send = Intent(Intent.ACTION_SEND).setType("text/csv").putExtra(Intent.EXTRA_SUBJECT, "PocketTrader trade history").putExtra(Intent.EXTRA_TEXT, engine.exportTradesCsv())
+            runCatching { context.startActivity(Intent.createChooser(send, "Export trade history")) }
+        }) { Text("Export CSV") }
         Row { FilterChip(!showEvents, { showEvents = false }, { Text("Trades") }); Spacer(Modifier.width(8.dp)); FilterChip(showEvents, { showEvents = true }, { Text("Events") }) }
         LazyColumn {
             if (!showEvents) items(trades, key = { it.requestId }) { t ->
@@ -612,6 +718,7 @@ fun AccountScreen(engine: TradingEngine, onWebLogin: () -> Unit, onMessage: (Str
     val sessions by engine.sessions.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     var paste by remember { mutableStateOf("") }
+    var backup by rememberSaveable { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
         Text("Pocket Option sessions", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Text("Demo session: ${if (sessions.first) "saved ✓" else "none"}    Real session: ${if (sessions.second) "saved ✓" else "none"}")
@@ -625,6 +732,21 @@ fun AccountScreen(engine: TradingEngine, onWebLogin: () -> Unit, onMessage: (Str
             OutlinedButton(onClick = { engine.disconnect() }) { Text("Disconnect") }
             OutlinedButton(onClick = { engine.clearSessions() }) { Text("Forget sessions") }
         }
+        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+        Text("Settings backup", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("Export or restore strategy and risk settings. Pocket Option sessions and NVIDIA API keys are deliberately excluded.", fontSize = 12.sp, color = Color.Gray)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { backup = engine.settingsBackupJson() }) { Text("Generate backup") }
+            OutlinedButton(onClick = {
+                val clip = ClipData.newPlainText("PocketTrader settings backup", engine.settingsBackupJson())
+                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                onMessage("Settings backup copied. It does not contain login sessions or API keys.")
+            }) { Text("Copy backup") }
+        }
+        OutlinedTextField(backup, { backup = it }, label = { Text("Paste backup JSON here to restore") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp), minLines = 4)
+        Button(onClick = { engine.restoreSettingsBackup(backup)?.let(onMessage) ?: onMessage("Settings restored successfully.") },
+            enabled = backup.isNotBlank()) { Text("Restore settings") }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text("Or paste a session (fallback)", fontWeight = FontWeight.Bold)
         Text(PASTE_HELP, fontSize = 12.sp)

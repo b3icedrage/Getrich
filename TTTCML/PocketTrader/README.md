@@ -23,6 +23,14 @@ strategy-based and NOT guaranteed. Start on Demo.
 - Fallback: paste the auth message from browser dev tools (instructions in the app).
 - Demo and Real use different sessions. Real sessions are bound to IP + User-Agent.
 
+## PocketTrader v2 reliability and analytics
+
+- Live feed age is shown in the Trade screen; all order paths reject stale quotes and duplicate rapid taps.
+- Analytics includes a received-tick price trace, confirmed-result performance summary, CSV export and transparent historical OHLC comparison (EMA cross, RSI reversion, Bollinger reversion).
+- Conservative and Balanced risk presets are available; max simultaneous open trades is configurable.
+- Settings backup/restore covers strategy and risk settings only. Account sessions and API keys are intentionally excluded.
+- Historical backtests are approximations, not broker execution simulations or profit forecasts.
+
 ## Code map
 - `protocol/` socket.io codec (SocketIo.kt), SSID parsing + servers (Ssid.kt), payload parsers (Models.kt), WebSocket client (PocketClient.kt)
 - `signals/` indicators (EMA, SMA, RSI, MACD, Bollinger, ATR, ADX, Donchian, Supertrend), candle aggregator, strategies, signal engine, adaptive analytics (3-state HMM volatility regime, KDE residual tails, pair diagnostics, conservative fractional-Kelly helper)

@@ -96,7 +96,7 @@ class SecureStore(context: Context) {
     fun saveRisk(r: RiskConfig) {
         plain.edit().putFloat("rk_stake", r.stake.toFloat()).putInt("rk_max", r.maxTradesPerSession)
             .putFloat("rk_sl", r.dailyStopLoss.toFloat()).putFloat("rk_tp", r.dailyTakeProfit.toFloat())
-            .putInt("rk_cl", r.maxConsecutiveLosses).putInt("rk_delay", r.maxSignalDelaySec).apply()
+            .putInt("rk_cl", r.maxConsecutiveLosses).putInt("rk_open", r.maxOpenTrades).putInt("rk_delay", r.maxSignalDelaySec).apply()
     }
 
     fun loadRisk(): RiskConfig {
@@ -107,6 +107,7 @@ class SecureStore(context: Context) {
             dailyStopLoss = plain.getFloat("rk_sl", d.dailyStopLoss.toFloat()).toDouble(),
             dailyTakeProfit = plain.getFloat("rk_tp", d.dailyTakeProfit.toFloat()).toDouble(),
             maxConsecutiveLosses = plain.getInt("rk_cl", d.maxConsecutiveLosses),
+            maxOpenTrades = plain.getInt("rk_open", d.maxOpenTrades),
             maxSignalDelaySec = plain.getInt("rk_delay", d.maxSignalDelaySec),
         )
     }
