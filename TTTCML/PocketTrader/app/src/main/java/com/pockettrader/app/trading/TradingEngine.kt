@@ -436,6 +436,7 @@ class TradingEngine(context: Context) {
                 confluenceScore = if (decision.direction == Direction.CALL) confluence.callScore else confluence.putScore
             )
         } ?: return null
+        _ttSignals.update { (listOf(result) + it).distinctBy { item -> item.id }.take(100) }
         _signals.update { (listOf(result) + it).take(100) }
         log("Manual signal generated: ${result.direction.label} ${result.asset} (${result.strategy.label})")
         return result
