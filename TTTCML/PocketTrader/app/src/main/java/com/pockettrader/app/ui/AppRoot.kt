@@ -523,7 +523,7 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                 when {
                     conn != ConnState.CONNECTED -> onMessage("Connect first (Trade tab).")
                     !aiConfigured -> onMessage("Save your NVIDIA API key first to enable Nemotron AI Auto Trade.")
-                    account == AccountType.REAL -> confirmRealAuto = true
+                    account == AccountType.REAL -> onMessage("Nemotron AI Auto Trade is currently demo-only. Switch to Demo first.")
                     else -> engine.setAuto(true)
                 }
             }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Green)) {
