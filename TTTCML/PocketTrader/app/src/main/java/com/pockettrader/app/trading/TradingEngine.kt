@@ -31,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 enum class AccountType { DEMO, REAL }
@@ -319,7 +320,8 @@ class TradingEngine(context: Context) {
             .put("emaSlow", c.emaSlow).put("minPayout", c.minPayout)
             .put("adaptiveMinRegimeConfidence", c.adaptiveMinRegimeConfidence)
             .put("adaptiveMaxTailProbability", c.adaptiveMaxTailProbability)
-        val rk = JSONObject().put("stake", r.stake).put("stakePercent", r.stakePercent).put("minimumStake", r.minimumStake).put("maxTradesPerSession", r.maxTradesPerSession)
+        val rk = JSONObject().put("stake", r.stake).put("stakePercent", r.stakePercent).put("minimumStake", r.minimumStake)
+            .put("sessionStartHour", r.sessionStartHour).put("sessionEndHour", r.sessionEndHour).put("maxTradesPerSession", r.maxTradesPerSession)
             .put("dailyStopLoss", r.dailyStopLoss).put("dailyTakeProfit", r.dailyTakeProfit)
             .put("maxConsecutiveLosses", r.maxConsecutiveLosses).put("maxOpenTrades", r.maxOpenTrades)
             .put("maxSignalDelaySec", r.maxSignalDelaySec)
@@ -368,6 +370,8 @@ class TradingEngine(context: Context) {
             stake = rk.optDouble("stake", rd.stake).coerceIn(0.1, 100000.0),
             stakePercent = rk.optDouble("stakePercent", rd.stakePercent).coerceIn(0.1, 5.0),
             minimumStake = rk.optDouble("minimumStake", rd.minimumStake).coerceIn(0.1, 100000.0),
+            sessionStartHour = rk.optInt("sessionStartHour", rd.sessionStartHour).coerceIn(0, 23),
+            sessionEndHour = rk.optInt("sessionEndHour", rd.sessionEndHour).coerceIn(0, 23),
             maxTradesPerSession = rk.optInt("maxTradesPerSession", rd.maxTradesPerSession).coerceIn(1, 1000),
             dailyStopLoss = rk.optDouble("dailyStopLoss", rd.dailyStopLoss).coerceAtLeast(0.0),
             dailyTakeProfit = rk.optDouble("dailyTakeProfit", rd.dailyTakeProfit).coerceAtLeast(0.0),
@@ -648,6 +652,7 @@ class TradingEngine(context: Context) {
         val payout = _assets.value.firstOrNull { it.symbol == sig.asset }?.payout
         return when {
             connState.value != ConnState.CONNECTED -> "not connected"
+            sessionTimeBlockReason() != null -> sessionTimeBlockReason()!!
             (synchronized(lock) { marketTickAtMs[sig.asset] ?: 0L }).let { it <= 0L || System.currentTimeMillis() - it > MAX_TICK_AGE_MS } -> "live quote for ${sig.asset} is stale"
             riskManager.isLate(sig.entryAtSec, client.serverNowSec()) -> "signal late (> ${_risk.value.maxSignalDelaySec}s)"
             payout == null -> "payout data unavailable for ${sig.asset}"
@@ -681,6 +686,18 @@ class TradingEngine(context: Context) {
         } else {
             _autoStatus.value = "Placed ${sig.direction.label} ${sig.asset} from live-feed signal"
         }
+    }
+
+    private fun sessionTimeBlockReason(): String? {
+        val start = _risk.value.sessionStartHour.coerceIn(0, 23)
+        val end = _risk.value.sessionEndHour.coerceIn(0, 23)
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val allowed = when {
+            start == end -> false
+            start < end -> hour >= start && hour < end
+            else -> hour >= start || hour < end
+        }
+        return if (allowed) null else "outside configured local session ${start}:00–${end}:00"
     }
 
     private fun calculatedAutoStake(): Double? {
