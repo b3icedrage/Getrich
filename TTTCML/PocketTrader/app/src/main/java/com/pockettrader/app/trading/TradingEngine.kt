@@ -337,9 +337,19 @@ class TradingEngine(context: Context) {
     }
 
     fun setAuto(on: Boolean, reason: String? = null) {
-        if (on && _account.value != AccountType.DEMO) {
-            _autoStatus.value = "Blocked: AI Auto Trade is demo-only"
-            log("AI Autotrader start blocked: real-account execution is disabled")
+        if (on && connState.value != ConnState.CONNECTED) {
+            _autoStatus.value = "Blocked: connect to the selected account first"
+            log("Autotrader start blocked: account is not connected")
+            return
+        }
+        if (on && client.isDemo != (_account.value == AccountType.DEMO)) {
+            _autoStatus.value = "Blocked: selected account does not match the connected session"
+            log("Autotrader start blocked: session/account mismatch")
+            return
+        }
+        if (on && (_lastTickAtMs.value == 0L || System.currentTimeMillis() - _lastTickAtMs.value > MAX_TICK_AGE_MS)) {
+            _autoStatus.value = "Blocked: waiting for fresh live market data"
+            log("Autotrader start blocked: live feed is stale")
             return
         }
         if (_auto.value == on) return
