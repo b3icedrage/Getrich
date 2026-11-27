@@ -748,6 +748,7 @@ fun AnalyticsScreen(engine: TradingEngine) {
     val priceHistory by engine.priceHistory.collectAsStateWithLifecycle()
     val candles by engine.candleHistory.collectAsStateWithLifecycle()
     val trades by engine.trades.collectAsStateWithLifecycle()
+    val journal by engine.signalJournal.collectAsStateWithLifecycle()
     val asset by engine.selectedAsset.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
     val strategy by engine.strategy.collectAsStateWithLifecycle()
@@ -769,6 +770,24 @@ fun AnalyticsScreen(engine: TradingEngine) {
             MetricCard("Closed", closed.size.toString(), Modifier.weight(1f))
             MetricCard("Win rate", if (closed.isEmpty()) "—" else "${"%.1f".format(wins * 100.0 / closed.size)}%", Modifier.weight(1f))
             MetricCard("Net P/L", "%+.2f".format(net), Modifier.weight(1f))
+        }
+
+        val completedSignals = journal.filter { it.account == account && it.brokerResult in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
+        if (completedSignals.isNotEmpty()) {
+            Text("Signal performance by strategy", fontWeight = FontWeight.Bold)
+            completedSignals.groupBy { it.signal.strategy.label }.toList().sortedByDescending { (_, rows) -> rows.size }.forEach { (name, rows) ->
+                val winsForStrategy = rows.count { it.brokerResult == TradeStatus.WIN }
+                val decided = rows.count { it.brokerResult == TradeStatus.WIN || it.brokerResult == TradeStatus.LOSS }
+                val netForStrategy = rows.sumOf { it.netReturn ?: 0.0 }
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(name, fontWeight = FontWeight.SemiBold)
+                        Text("${rows.size} settled · ${if (decided > 0) "${"%.1f".format(winsForStrategy * 100.0 / decided)}%" else "—"} win rate", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("%+.2f".format(netForStrategy), fontWeight = FontWeight.Bold, color = if (netForStrategy >= 0.0) Green else Red)
+                }
+            }
+            Text("Signal journal includes only broker-settled outcomes here; untraded, pending and unknown signals are excluded.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         val byAsset = closed.groupBy { it.asset }.mapValues { (_, rows) ->
