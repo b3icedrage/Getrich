@@ -779,7 +779,7 @@ class TradingEngine(context: Context) {
     fun placeManual(direction: Direction, amount: Double, expirySec: Int): String? =
         place(_asset.value, amount, direction, expirySec, TradeSource.MANUAL, null)
 
-    private fun validateOrder(asset: String, amount: Double, expirySec: Int): String? {
+    private fun validateOrder(asset: String, amount: Double, direction: Direction, expirySec: Int, signalId: Long?): String? {
         if (connState.value != ConnState.CONNECTED) return "Not connected"
         val demo = _account.value == AccountType.DEMO
         if (client.isDemo != demo) return "Session/account mismatch. Reconnect to the selected account."
@@ -792,6 +792,15 @@ class TradingEngine(context: Context) {
         if (currentBalance == null || !currentBalance.isFinite() || amount > currentBalance)
             return "A valid broker balance is required and the stake cannot exceed it."
         if (expirySec !in 5..3600) return "Expiry must be between 5 and 3600 seconds."
+        if (signalId != null) {
+            val signal = _signals.value.firstOrNull { it.id == signalId }
+                ?: return "Signal is no longer eligible for execution."
+            if (signal.asset != asset || signal.direction != direction || signal.expirySec != expirySec)
+                return "Order asset, direction or expiry does not match the originating signal."
+            val age = System.currentTimeMillis() - signal.emittedAtMs
+            if (age !in 0..MAX_TT_SIGNAL_AGE_MS) return "Signal expired before execution. Wait for a fresh signal."
+            if (signal.confluenceScore < _minConfluence.value) return "Signal is below the current confluence threshold."
+        }
         if (listed.payout <= 0 || listed.payout < _strategy.value.minPayout)
             return "Payout is unavailable or below the configured ${_strategy.value.minPayout}% minimum."
         val now = System.currentTimeMillis()
@@ -805,7 +814,7 @@ class TradingEngine(context: Context) {
     }
 
     private fun place(asset: String, amount: Double, direction: Direction, expirySec: Int, source: TradeSource, signalId: Long?): String? {
-        validateOrder(asset, amount, expirySec)?.let { return it }
+        validateOrder(asset, amount, direction, expirySec, signalId)?.let { return it }
         if (signalId != null) synchronized(lock) {
             if (!claimedSignalIds.add(signalId)) return "This signal has already been submitted. Duplicate order blocked."
             while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
