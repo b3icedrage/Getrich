@@ -37,4 +37,15 @@ class RiskManagerTest {
         r.onOpened(); r.onRejected(); assertNull(r.blockReason(day))
         assertFalse(r.isLate(100, 102.5)); assertTrue(r.isLate(100, 103.5))
     }
+    @Test fun reservationChecksAndConsumesOpenSlotAtomically() {
+        val r = RiskManager(RiskConfig(maxOpenTrades = 1, maxTradesPerSession = 10, dailyStopLoss = 0.0, dailyTakeProfit = 0.0))
+        assertNull(r.reserveOpen(day))
+        assertEquals("A trade is still open", r.reserveOpen(day))
+        assertEquals(1, r.state.openTrades)
+        r.onRejected()
+        assertNull(r.reserveOpen(day))
+        assertEquals(1, r.state.sessionTrades)
+        assertEquals(1, r.state.openTrades)
+    }
+
 }
