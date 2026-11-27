@@ -130,7 +130,7 @@ class TradingEngine(context: Context) {
         val demo = _account.value == AccountType.DEMO
         val s = store.loadSession(demo) ?: return "No ${if (demo) "demo" else "real"} session saved. Sign in on the Account tab first."
         if (s.isDemo != demo) return "Saved session type does not match the selected account"
-        signalEngine.reset(); _price.value = null; _balance.value = null
+        signalEngine.reset(); _price.value = null; _balance.value = null; _lastTickAtMs.value = 0L
         client.watch(_asset.value, _strategy.value.timeframeSec)
         client.connect(s)
         return null
@@ -138,6 +138,7 @@ class TradingEngine(context: Context) {
 
     fun disconnect() {
         setAuto(false, "Disconnected")
+        _lastTickAtMs.value = 0L
         client.disconnect()
     }
 
@@ -157,6 +158,7 @@ class TradingEngine(context: Context) {
         if (symbol == _asset.value) return
         _asset.value = symbol; store.lastAsset = symbol
         _price.value = null
+        _lastTickAtMs.value = 0L
         signalEngine.reset()
         client.watch(symbol, _strategy.value.timeframeSec)
         requestHistory()
