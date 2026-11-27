@@ -152,6 +152,13 @@ class SecureStore(context: Context) {
         if (it in listOf(40, 50, 60, 70, 80, 90)) it else 80
     }
 
+    /** Persist the non-sensitive signal performance journal locally on this device. */
+    fun saveSignalJournalJson(value: String) {
+        plain.edit().putString("signal_journal_json", value.take(900_000)).apply()
+    }
+
+    fun loadSignalJournalJson(): String = plain.getString("signal_journal_json", "[]") ?: "[]"
+
     var lastAsset: String
         get() = plain.getString("asset", "EURUSD_otc")!!
         set(v) { plain.edit().putString("asset", v).apply() }
