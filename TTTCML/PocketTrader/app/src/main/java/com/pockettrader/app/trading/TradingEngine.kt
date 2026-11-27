@@ -7,6 +7,7 @@ import com.pockettrader.app.data.SecureStore
 import com.pockettrader.app.protocol.Candle
 import com.pockettrader.app.analytics.analyseTechnicalMarket
 import org.json.JSONObject
+import org.json.JSONArray
 import com.pockettrader.app.protocol.Asset
 import com.pockettrader.app.protocol.ConnState
 import com.pockettrader.app.protocol.Deal
@@ -93,7 +94,7 @@ class TradingEngine(context: Context) {
     private val _pendingSignal = MutableStateFlow<Signal?>(null); val pendingSignal: StateFlow<Signal?> = _pendingSignal
     private val _minConfluence = MutableStateFlow(store.loadMinConfluence()); val minConfluence: StateFlow<Int> = _minConfluence
     private val _trades = MutableStateFlow<List<TradeRecord>>(emptyList()); val trades: StateFlow<List<TradeRecord>> = _trades
-    private val _signalJournal = MutableStateFlow<List<SignalAuditRecord>>(emptyList())
+    private val _signalJournal = MutableStateFlow(loadSignalJournal())
     val signalJournal: StateFlow<List<SignalAuditRecord>> = _signalJournal
     private val claimedSignalIds = LinkedHashSet<Long>()
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList()); val logs: StateFlow<List<LogLine>> = _logs
@@ -604,15 +605,66 @@ class TradingEngine(context: Context) {
         return place(signal.asset, amount, signal.direction, signal.expirySec, TradeSource.MANUAL, signal.id)
     }
 
+    private fun loadSignalJournal(): List<SignalAuditRecord> = runCatching {
+        val array = JSONArray(store.loadSignalJournalJson())
+        buildList {
+            for (index in 0 until array.length()) {
+                val row = array.optJSONObject(index) ?: continue
+                val signal = Signal(
+                    id = row.optLong("id"),
+                    asset = row.optString("asset"),
+                    direction = Direction.valueOf(row.optString("direction")),
+                    strategy = com.pockettrader.app.signals.StrategyType.valueOf(row.optString("strategy")),
+                    reason = row.optString("reason"),
+                    entryAtSec = row.optLong("entryAtSec"),
+                    expirySec = row.optInt("expirySec"),
+                    emittedAtMs = row.optLong("emittedAtMs"),
+                    confluenceScore = row.optInt("confluenceScore"),
+                    referencePrice = row.optDouble("referencePrice", Double.NaN).takeIf { it.isFinite() }
+                )
+                add(SignalAuditRecord(
+                    signal = signal,
+                    account = AccountType.valueOf(row.optString("account", AccountType.DEMO.name)),
+                    emittedPrice = row.optDouble("emittedPrice", Double.NaN).takeIf { it.isFinite() },
+                    entryPrice = row.optDouble("entryPrice", Double.NaN).takeIf { it.isFinite() },
+                    expiryAtMs = row.optLong("expiryAtMs").takeIf { it > 0L },
+                    brokerResult = TradeStatus.valueOf(row.optString("brokerResult", TradeStatus.UNKNOWN.name)),
+                    netReturn = row.optDouble("netReturn", Double.NaN).takeIf { it.isFinite() },
+                    tradeRequestId = row.optString("tradeRequestId").takeIf { it.isNotBlank() }
+                ))
+            }
+        }.take(1000)
+    }.getOrDefault(emptyList())
+
+    private fun persistSignalJournal() {
+        val array = JSONArray()
+        _signalJournal.value.forEach { row ->
+            array.put(JSONObject()
+                .put("id", row.signal.id).put("asset", row.signal.asset)
+                .put("direction", row.signal.direction.name).put("strategy", row.signal.strategy.name)
+                .put("reason", row.signal.reason).put("entryAtSec", row.signal.entryAtSec)
+                .put("expirySec", row.signal.expirySec).put("emittedAtMs", row.signal.emittedAtMs)
+                .put("confluenceScore", row.signal.confluenceScore)
+                .put("referencePrice", row.signal.referencePrice ?: JSONObject.NULL)
+                .put("account", row.account.name).put("emittedPrice", row.emittedPrice ?: JSONObject.NULL)
+                .put("entryPrice", row.entryPrice ?: JSONObject.NULL).put("expiryAtMs", row.expiryAtMs ?: JSONObject.NULL)
+                .put("brokerResult", row.brokerResult.name).put("netReturn", row.netReturn ?: JSONObject.NULL)
+                .put("tradeRequestId", row.tradeRequestId ?: JSONObject.NULL))
+        }
+        store.saveSignalJournalJson(array.toString())
+    }
+
     private fun recordSignal(signal: Signal) {
         _signalJournal.update { rows ->
             if (rows.any { it.signal.id == signal.id }) rows
             else (listOf(SignalAuditRecord(signal, _account.value, signal.referencePrice)) + rows).take(1000)
         }
+        persistSignalJournal()
     }
 
     private fun updateSignalAudit(id: Long, change: (SignalAuditRecord) -> SignalAuditRecord) {
         _signalJournal.update { rows -> rows.map { if (it.signal.id == id) change(it) else it } }
+        persistSignalJournal()
     }
 
     fun exportSignalJournalCsv(): String {
