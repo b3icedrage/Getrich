@@ -42,8 +42,8 @@ object SmartEntryRules {
         if (swingPoints.size >= 2) {
             val a = swingPoints[swingPoints.size - 2]
             val b = swingPoints.last()
-            divergence = if (bullish) lows[b] < lows[a] && rsi[b] > rsi[a] + 1.0 && rsi[n] <= 50.0
-                else highs[b] > highs[a] && rsi[b] < rsi[a] - 1.0 && rsi[n] >= 50.0
+            divergence = if (bullish) lows[b] < lows[a] && rsi[b] > rsi[a] + 1.0 && rsi[n] <= 45.0
+                else highs[b] > highs[a] && rsi[b] < rsi[a] - 1.0 && rsi[n] >= 55.0
         }
         if (!divergence) return "no confirming RSI divergence"
 
