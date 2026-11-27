@@ -66,6 +66,7 @@ class TradingEngine(context: Context) {
     private val client = PocketClient(scope)
     private val nemotron = NemotronClient()
     private val lock = Any()
+    @Volatile private var backgroundReconnectEnabled = false
 
     val connState: StateFlow<ConnState> = client.state
     private val _account = MutableStateFlow(AccountType.DEMO)   // always start on demo
@@ -120,7 +121,7 @@ class TradingEngine(context: Context) {
                         TradingService.start(app, _account.value)
                     }
                     ConnState.AUTH_FAILED -> TradingService.stop(app)
-                    ConnState.DISCONNECTED -> if (wasConnected) {
+                    ConnState.DISCONNECTED -> if (wasConnected && backgroundReconnectEnabled) {
                         delay(3_000)
                         if (client.state.value == ConnState.DISCONNECTED) {
                             log("Background connection lost; reconnecting...")
@@ -166,6 +167,8 @@ class TradingEngine(context: Context) {
         val demo = _account.value == AccountType.DEMO
         val s = store.loadSession(demo) ?: return "No ${if (demo) "demo" else "real"} session saved. Sign in on the Account tab first."
         if (s.isDemo != demo) return "Saved session type does not match the selected account"
+        backgroundReconnectEnabled = true
+        TradingService.start(app, _account.value)
         signalEngine.reset(); _price.value = null; _balance.value = null; _lastTickAtMs.value = 0L
         _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
         synchronized(lock) { marketEngines.clear(); marketTickAtMs.clear() }
@@ -175,6 +178,7 @@ class TradingEngine(context: Context) {
     }
 
     fun disconnect() {
+        backgroundReconnectEnabled = false
         setAuto(false, "Disconnected")
         TradingService.stop(app)
         _lastTickAtMs.value = 0L
