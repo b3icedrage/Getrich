@@ -19,6 +19,7 @@ enum class StrategyType(val label: String, val description: String) {
     LIQUIDITY_SWEEP("Liquidity sweep reversal", "Wick beyond the recent swing high/low, then close back inside = trade the reversal."),
     EMA_RSI("EMA cross + RSI (simple)", "Fast EMA crosses slow EMA, confirmed by RSI on the same side of 50."),
     ADAPTIVE_AI("Adaptive AI (HMM + KDE)", "Three-state HMM volatility regime gate; KDE residual tails for mean reversion; momentum in normal regimes; chaotic regimes wait."),
+    CONSENSUS("Multi-strategy consensus", "Runs every strategy and combines independent BUY/SELL votes; weak or conflicting setups return NO TRADE."),
 }
 
 enum class TrendTrigger { MACD, SUPERTREND }
@@ -62,6 +63,36 @@ object Strategies {
         StrategyType.LIQUIDITY_SWEEP -> liquiditySweep(cfg, ltf)
         StrategyType.EMA_RSI -> emaRsi(cfg, ltf)
         StrategyType.ADAPTIVE_AI -> adaptiveAi(cfg, ltf, htf)
+        StrategyType.CONSENSUS -> consensus(cfg, ltf, htf)
+    }
+
+    /**
+     * One-tap signal mode: evaluate every strategy against the same closed-candle snapshot.
+     * Require at least two agreeing votes and a 2/3 majority of all strategies that fired.
+     * This is a rule-based consensus score, not a calibrated probability of winning.
+     */
+    fun consensus(cfg: StrategyConfig, ltf: List<Candle>, htf: List<Candle>): Decision? {
+        val votes = StrategyType.entries
+            .filter { it != StrategyType.CONSENSUS }
+            .mapNotNull { type -> evaluate(cfg.copy(type = type), ltf, htf) }
+        if (votes.isEmpty()) return null
+
+        val buys = votes.count { it.direction == Direction.CALL }
+        val sells = votes.count { it.direction == Direction.PUT }
+        val total = votes.size
+        val winning = maxOf(buys, sells)
+        if (winning < 2 || winning.toDouble() / total < (2.0 / 3.0)) return null
+
+        val direction = if (buys > sells) Direction.CALL else Direction.PUT
+        val aligned = votes.filter { it.direction == direction }
+        val names = aligned.joinToString { it.strategy.label }
+        val score = winning * 100.0 / total
+        return Decision(
+            direction,
+            StrategyType.CONSENSUS,
+            "Consensus score %.0f%% (%d/%d strategy votes). Agreement: %s. Opposing votes: %d."
+                .format(score, winning, total, names, total - winning)
+        )
     }
 
     /**
