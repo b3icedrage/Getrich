@@ -76,7 +76,8 @@ class TradingEngine(context: Context) {
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList()); val logs: StateFlow<List<LogLine>> = _logs
     private val _strategy = MutableStateFlow(store.loadStrategy()); val strategy: StateFlow<StrategyConfig> = _strategy
     private val _risk = MutableStateFlow(store.loadRisk()); val risk: StateFlow<RiskConfig> = _risk
-    private val riskManager = RiskManager(_risk.value)
+    private val riskManagers = mutableMapOf(AccountType.DEMO to RiskManager(_risk.value), AccountType.REAL to RiskManager(_risk.value))
+    private val riskManager: RiskManager get() = riskManagers.getValue(_account.value)
     private val _riskState = MutableStateFlow(riskManager.state); val riskState: StateFlow<RiskState> = _riskState
     private val _aiConfigured = MutableStateFlow(store.loadNvidiaApiKey().isNotBlank()); val aiConfigured: StateFlow<Boolean> = _aiConfigured
     private val _aiStatus = MutableStateFlow(if (_aiConfigured.value) "NVIDIA key saved · chat ready" else "API key required for AI chat")
@@ -148,6 +149,7 @@ class TradingEngine(context: Context) {
         setAuto(false, "Account switched")
         client.disconnect()
         _account.value = type
+        _riskState.value = riskManager.state
         log("Account switched to $type")
         return connect()
     }
@@ -181,7 +183,7 @@ class TradingEngine(context: Context) {
 
     fun updateRisk(r: RiskConfig) {
         _risk.value = r; store.saveRisk(r)
-        riskManager.config = r; _riskState.value = riskManager.state
+        riskManagers.values.forEach { it.config = r }; _riskState.value = riskManager.state
     }
 
     fun resetSession() { riskManager.resetSession(); _riskState.value = riskManager.state; log("Autotrader session counters reset") }
@@ -437,7 +439,11 @@ class TradingEngine(context: Context) {
             it.copy(status = TradeStatus.FAILED, note = error)
         }
         log("Order rejected: $error")
-        if (r?.source == TradeSource.AUTO) { riskManager.onRejected(); _riskState.value = riskManager.state }
+        if (r?.source == TradeSource.AUTO) {
+            val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
+            manager.onRejected()
+            if (r.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
+        }
     }
 
     private fun onClosed(d: Deal) {
@@ -450,8 +456,13 @@ class TradingEngine(context: Context) {
         Notifier.result(app, r)
         client.refreshBalance()
         if (r.source == TradeSource.AUTO) {
-            riskManager.onClosed(net, dayKey()); _riskState.value = riskManager.state
-            if (_auto.value) riskManager.blockReason(dayKey())?.takeIf { riskLimitHit(it) }?.let { setAuto(false, it) }
+            val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
+            val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
+            manager.onClosed(net, dayKey())
+            if (isActiveAccount) {
+                _riskState.value = manager.state
+                if (_auto.value) manager.blockReason(dayKey())?.takeIf { riskLimitHit(it) }?.let { setAuto(false, it) }
+            }
         }
     }
 
@@ -463,7 +474,9 @@ class TradingEngine(context: Context) {
             updateTrade({ it.requestId == t.requestId }) { it.copy(status = TradeStatus.UNKNOWN, note = "No result received; check Pocket Option history") }
             log("No result for ${t.asset} trade; marked UNKNOWN")
             if (t.source == TradeSource.AUTO) {
-                riskManager.onClosed(-t.amount, dayKey()); _riskState.value = riskManager.state
+                val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
+                manager.onClosed(-t.amount, dayKey())
+                if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
             }
         }
     }
