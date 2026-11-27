@@ -73,9 +73,7 @@ enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), ANALYTIC
 fun AppRoot(engine: TradingEngine) {
     var tab by rememberSaveable { mutableStateOf(Tab.ACCOUNT.takeIf { !engine.sessions.value.first && !engine.sessions.value.second } ?: Tab.TRADE) }
     var showWebLogin by remember { mutableStateOf(false) }
-    var confirmReal by remember { mutableStateOf<Signal?>(null) }
-    var confirmRealAuto by remember { mutableStateOf(false) }
-    var confirmRealIsPending by remember { mutableStateOf(false) }
+    var confirmReal by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val conn by engine.connState.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
@@ -331,6 +329,7 @@ fun SignalsScreen(engine: TradingEngine) {
     var feedback by remember { mutableStateOf<String?>(null) }
     var confirmReal by remember { mutableStateOf<Signal?>(null) }
     var confirmRealAuto by remember { mutableStateOf(false) }
+    var confirmRealIsPending by remember { mutableStateOf(false) }
 
     if (confirmReal != null) {
         val signal = confirmReal!!
