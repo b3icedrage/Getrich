@@ -75,6 +75,7 @@ class TradingEngine(context: Context) {
     private val _asset = MutableStateFlow(store.lastAsset); val selectedAsset: StateFlow<String> = _asset
     private val _price = MutableStateFlow<Double?>(null); val price: StateFlow<Double?> = _price
     private val _signals = MutableStateFlow<List<Signal>>(emptyList()); val signals: StateFlow<List<Signal>> = _signals
+    private val _ttSignals = MutableStateFlow<List<Signal>>(emptyList()); val ttSignals: StateFlow<List<Signal>> = _ttSignals
     private val _pendingSignal = MutableStateFlow<Signal?>(null); val pendingSignal: StateFlow<Signal?> = _pendingSignal
     private val _minConfluence = MutableStateFlow(store.loadMinConfluence()); val minConfluence: StateFlow<Int> = _minConfluence
     private val _trades = MutableStateFlow<List<TradeRecord>>(emptyList()); val trades: StateFlow<List<TradeRecord>> = _trades
@@ -431,7 +432,8 @@ class TradingEngine(context: Context) {
                 reason = "${decision.reason} | ${confluence.summary} | CALL ${confluence.callScore}/100, PUT ${confluence.putScore}/100",
                 entryAtSec = client.serverNowSec().toLong(),
                 expirySec = cfg.expirySec,
-                emittedAtMs = System.currentTimeMillis()
+                emittedAtMs = System.currentTimeMillis(),
+                confluenceScore = if (decision.direction == Direction.CALL) confluence.callScore else confluence.putScore
             )
         } ?: return null
         _signals.update { (listOf(result) + it).take(100) }
@@ -469,9 +471,14 @@ class TradingEngine(context: Context) {
             log("Signal filtered: technical confluence does not confirm ${sig.direction.label} on ${sig.asset}; analysis says ${technical.label}")
             return
         }
+        _ttSignals.update { (listOf(sig) + it).distinctBy { item -> item.id }.take(100) }
+        if (sig.confluenceScore < _minConfluence.value) {
+            log("TT watchlist: ${sig.asset} ${sig.direction.label} at ${sig.confluenceScore}% is near the ${_minConfluence.value}% threshold; no order placed")
+            return
+        }
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
-        log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}): ${sig.reason}")
+        log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}) at ${sig.confluenceScore}% confluence: ${sig.reason}")
         if (_auto.value) {
             _pendingSignal.value = null
             autoExecute(sig)
