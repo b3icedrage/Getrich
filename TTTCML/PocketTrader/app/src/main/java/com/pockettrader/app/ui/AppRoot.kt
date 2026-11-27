@@ -66,7 +66,7 @@ private val Green = Color(0xFF2E7D32)
 private val Red = Color(0xFFC62828)
 private val hms = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), ANALYTICS("Stats"), CHAT("AI Chat"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
+enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), TT("TT"), ANALYTICS("Stats"), CHAT("AI Chat"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,7 +132,7 @@ fun AppRoot(engine: TradingEngine) {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) }, icon = {
                         Icon(when (t) {
-                            Tab.TRADE -> Icons.Default.ShowChart; Tab.SIGNALS -> Icons.Default.Notifications
+                            Tab.TRADE -> Icons.Default.ShowChart; Tab.SIGNALS -> Icons.Default.Notifications; Tab.TT -> Icons.Default.Bolt
                             Tab.ANALYTICS -> Icons.Default.Analytics; Tab.CHAT -> Icons.Default.Chat; Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
                         }, null)
                     })
@@ -149,6 +149,7 @@ fun AppRoot(engine: TradingEngine) {
             when (activeTab) {
                 Tab.TRADE -> TradeScreen(engine) { message = it }
                 Tab.SIGNALS -> SignalsScreen(engine)
+                Tab.TT -> TTScreen(engine)
                 Tab.ANALYTICS -> AnalyticsScreen(engine)
                 Tab.CHAT -> ChatScreen(engine) { message = it }
                 Tab.AUTO -> AutoScreen(engine) { message = it }
@@ -571,6 +572,67 @@ fun NumField(label: String, value: Double, onChange: (Double) -> Unit) {
 
 // ---------------------------------------------------------------- Auto
 @Composable
+fun TTScreen(engine: TradingEngine) {
+    val watched by engine.ttSignals.collectAsStateWithLifecycle()
+    val threshold by engine.minConfluence.collectAsStateWithLifecycle()
+    val minimumShown = (threshold - 10).coerceAtLeast(40)
+    val ranked = watched.filter { it.confluenceScore >= minimumShown }
+        .sortedWith(compareByDescending<Signal> { it.confluenceScore }.thenByDescending { it.emittedAtMs })
+
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("TT · TOP SIGNALS", fontWeight = FontWeight.Black, fontSize = 18.sp)
+                Text("Near, matching or above your selected confluence threshold.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            }
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                Text("≥ ${minimumShown}%", Modifier.padding(horizontal = 10.dp, vertical = 7.dp), fontWeight = FontWeight.Bold)
+            }
+        }
+        Text("Ranked highest to lowest. Scores are indicator agreement, not win probabilities. Signals below ${threshold}% are watchlist-only and never trigger an order.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+        if (ranked.isEmpty()) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Bolt, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                    Text("No qualifying or near-threshold signals yet", fontWeight = FontWeight.SemiBold)
+                    Text("Connect to Pocket Option and wait for fresh candle data. Your selected threshold is ${threshold}%.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                }
+            }
+        } else {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ranked, key = { it.id }) { signal ->
+                    val qualified = signal.confluenceScore >= threshold
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(shape = RoundedCornerShape(10.dp),
+                                color = if (signal.direction == Direction.CALL) Color(0xFF17483F) else Color(0xFF5B252B)) {
+                                Text(if (signal.direction == Direction.CALL) "CALL" else "PUT",
+                                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp), color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(signal.asset, fontWeight = FontWeight.Bold)
+                                Text("${signal.strategy.label} · ${expiryLabel(signal.expirySec)}",
+                                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (qualified) "MEETS THRESHOLD" else "NEAR THRESHOLD · WATCH ONLY",
+                                    fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                                    color = if (qualified) Green else Color(0xFFB7791F))
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("${signal.confluenceScore}%", fontSize = 23.sp, fontWeight = FontWeight.Black,
+                                    color = if (qualified) Green else MaterialTheme.colorScheme.onSurface)
+                                Text("confluence", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val auto by engine.autoEnabled.collectAsStateWithLifecycle()
     val status by engine.autoStatus.collectAsStateWithLifecycle()
