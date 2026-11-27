@@ -592,9 +592,10 @@ class TradingEngine(context: Context) {
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}) at ${sig.confluenceScore}% confluence: ${sig.reason}")
-        if (_auto.value && sig.asset == _asset.value) {
-            // TT discovery across the market must not silently change the execution pair.
-            _pendingSignal.value = null
+        if (_auto.value) {
+            // Auto mode follows every eligible market-wide TT signal, not only the
+            // chart-selected pair. Submit immediately from the live tick event path.
+            if (sig.asset == _asset.value) _pendingSignal.value = null
             autoExecute(sig)
         } else if (sig.asset == _asset.value) {
             _pendingSignal.value = sig
@@ -630,7 +631,7 @@ class TradingEngine(context: Context) {
         val payout = _assets.value.firstOrNull { it.symbol == sig.asset }?.payout
         return when {
             connState.value != ConnState.CONNECTED -> "not connected"
-            _lastTickAtMs.value == 0L || System.currentTimeMillis() - _lastTickAtMs.value > MAX_TICK_AGE_MS -> "live market feed is stale"
+            (synchronized(lock) { marketTickAtMs[sig.asset] ?: 0L }).let { it <= 0L || System.currentTimeMillis() - it > MAX_TICK_AGE_MS } -> "live quote for ${sig.asset} is stale"
             riskManager.isLate(sig.entryAtSec, client.serverNowSec()) -> "signal late (> ${_risk.value.maxSignalDelaySec}s)"
             payout != null && payout < cfg.minPayout -> "payout $payout% < ${cfg.minPayout}%"
             else -> riskManager.blockReason(dayKey())
