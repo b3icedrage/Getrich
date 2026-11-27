@@ -633,6 +633,7 @@ fun TTScreen(engine: TradingEngine) {
     }
 }
 
+@Composable
 fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val auto by engine.autoEnabled.collectAsStateWithLifecycle()
     val status by engine.autoStatus.collectAsStateWithLifecycle()
