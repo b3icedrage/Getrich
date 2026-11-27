@@ -1,6 +1,11 @@
 package com.pockettrader.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -9,6 +14,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -173,33 +182,94 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                 Button(onClick = { engine.connect()?.let(onMessage) }) { Text("Connect") }
             }
         }
-        Text(current?.name ?: asset, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Price ${price?.let { "%.5f".format(it) } ?: "waiting…"}   Payout ${current?.payout?.let { "$it%" } ?: "-"}", fontSize = 16.sp)
-        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))
+        ) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(current?.name ?: asset, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Text(if (current?.isOtc == true) "OTC MARKET" else "MARKET WATCH", fontSize = 10.sp,
+                            letterSpacing = 1.4.sp, color = Color(0xFF91A8C5))
+                    }
+                    Surface(shape = RoundedCornerShape(50), color = Color(0xFF183F3B)) {
+                        Text("${current?.payout?.let { "$it% PAYOUT" } ?: "PAYOUT —"}",
+                            Modifier.padding(horizontal = 11.dp, vertical = 7.dp), color = Color(0xFF58E0C4),
+                            fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                AnimatedContent(targetState = price, label = "market-price") { p ->
+                    Text(p?.let { "%.5f".format(it) } ?: "Waiting for price…",
+                        fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+                Text(if (conn == ConnState.CONNECTED) "●  Price feed connected" else "○  Waiting for connection",
+                    fontSize = 11.sp, color = if (conn == ConnState.CONNECTED) Color(0xFF58E0C4) else Color(0xFFFFC76A))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Amount") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.width(120.dp), singleLine = true)
             ExpiryPicker(expiry) { expiry = it }
         }
         Spacer(Modifier.height(8.dp))
+        val pulse = rememberInfiniteTransition(label = "trade-button-pulse")
+            .animateFloat(initialValue = 0.985f, targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(1100), repeatMode = RepeatMode.Reverse), label = "pulse").value
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            listOf(Direction.CALL to Green, Direction.PUT to Red).forEach { (d, col) ->
+            listOf(Direction.CALL to Color(0xFF00A889), Direction.PUT to Color(0xFFE34D68)).forEach { (d, col) ->
                 Button(onClick = {
                     if (account == AccountType.REAL) pending = d
                     else engine.placeManual(d, amount.toDoubleOrNull() ?: 0.0, expiry)?.let(onMessage)
-                }, enabled = conn == ConnState.CONNECTED, colors = ButtonDefaults.buttonColors(containerColor = col),
-                    modifier = Modifier.weight(1f).height(56.dp)) { Text(if (d == Direction.CALL) "▲ HIGHER" else "▼ LOWER", fontSize = 18.sp) }
+                }, enabled = conn == ConnState.CONNECTED,
+                    colors = ButtonDefaults.buttonColors(containerColor = col, disabledContainerColor = Color(0xFF39475A)),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.weight(1f).height(62.dp).graphicsLayer {
+                        val s = if (conn == ConnState.CONNECTED) pulse else 1f
+                        scaleX = s; scaleY = s
+                    }) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(if (d == Direction.CALL) "▲  HIGHER" else "▼  LOWER", fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(if (d == Direction.CALL) "UP" else "DOWN", fontSize = 9.sp, letterSpacing = 1.5.sp)
+                    }
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(filter, { filter = it }, label = { Text("Search assets") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         LazyColumn(Modifier.fillMaxSize()) {
             items(assets.filter { filter.isBlank() || it.name.contains(filter, true) || it.symbol.contains(filter, true) }, key = { it.symbol }) { a ->
-                Row(Modifier.fillMaxWidth().clickable { engine.selectAsset(a.symbol) }
-                    .background(if (a.symbol == asset) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                    .padding(vertical = 8.dp, horizontal = 4.dp)) {
-                    Text(a.name + if (a.isOtc) " (OTC)" else "", Modifier.weight(1f), color = if (a.isActive) Color.Unspecified else Color.Gray)
-                    Text(if (a.isActive) "${a.payout}%" else "closed", fontWeight = FontWeight.Bold)
+                val selected = a.symbol == asset
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                        .clickable { engine.selectAsset(a.symbol) }
+                        .then(if (selected) Modifier.border(1.dp, Color(0xFF35D0BA), RoundedCornerShape(13.dp)) else Modifier),
+                    shape = RoundedCornerShape(13.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF183B45) else Color(0xFF111D30))
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Color(0xFF23665D) else Color(0xFF1C2C43)),
+                            contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.ShowChart, null, tint = if (selected) Color(0xFF63E6C5) else Color(0xFF91A8C5),
+                                modifier = Modifier.size(19.dp))
+                        }
+                        Spacer(Modifier.width(11.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(a.name, fontWeight = FontWeight.SemiBold, color = if (a.isActive) Color.White else Color.Gray)
+                            Text(if (a.isOtc) "OTC instrument" else a.symbol, fontSize = 10.sp, color = Color(0xFF91A8C5))
+                        }
+                        Text(if (a.isActive) "${a.payout}%" else "CLOSED", fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp, color = if (a.isActive) Color(0xFF58E0C4) else Color.Gray)
+                        if (selected) {
+                            Spacer(Modifier.width(7.dp))
+                            Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF58E0C4), modifier = Modifier.size(17.dp))
+                        }
+                    }
                 }
             }
         }
