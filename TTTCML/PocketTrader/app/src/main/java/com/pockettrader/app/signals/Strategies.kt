@@ -46,7 +46,7 @@ data class StrategyConfig(
     val adxPeriod: Int = 14, val adxTrend: Double = 25.0, val adxRange: Double = 20.0,
     val emaFast: Int = 9, val emaSlow: Int = 21,
     /** Ignore assets whose payout is below this. */
-    val minPayout: Int = 80,
+    val minPayout: Int = 70,
     val adaptiveMinRegimeConfidence: Double = 0.55,
     val adaptiveMaxTailProbability: Double = 0.05,
 )
