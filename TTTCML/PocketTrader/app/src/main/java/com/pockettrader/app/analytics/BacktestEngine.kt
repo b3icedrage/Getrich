@@ -48,9 +48,56 @@ data class BacktestReport(
  * slippage, exact expiry settlement rules and broker fills. Payout is a user-supplied
  * assumption and results are not a prediction of future performance.
  */
+
+data class WalkForwardReport(
+    val strategy: BacktestStrategy,
+    val training: BacktestReport,
+    val outOfSample: BacktestReport,
+    val splitIndex: Int,
+    val totalCandles: Int,
+    val breakEvenWinRatePct: Double,
+    val expectancyPerTrade: Double,
+    val assessment: String,
+)
+
+/**
+ * Chronological holdout: the first 60% is the in-sample window and the final 40%
+ * is evaluated separately. The holdout receives 30 earlier candles only as indicator
+ * warm-up; no holdout outcomes are included in training metrics.
+ */
 object BacktestEngine {
     fun compare(candles: List<Candle>, payoutPct: Double = 80.0, expiryBars: Int = 1): List<BacktestReport> =
         BacktestStrategy.entries.map { run(candles, it, payoutPct, expiryBars) }
+
+
+    fun walkForward(
+        candles: List<Candle>,
+        strategy: BacktestStrategy,
+        payoutPct: Double = 80.0,
+        expiryBars: Int = 1,
+        trainingFraction: Double = 0.60,
+    ): WalkForwardReport {
+        val fraction = trainingFraction.coerceIn(0.50, 0.80)
+        val split = (candles.size * fraction).toInt()
+        val warmupStart = (split - 30).coerceAtLeast(0)
+        val training = run(candles.take(split), strategy, payoutPct, expiryBars)
+        val holdout = if (candles.size - split >= 35) {
+            run(candles.drop(warmupStart), strategy, payoutPct, expiryBars)
+        } else {
+            run(emptyList(), strategy, payoutPct, expiryBars)
+        }
+        val payout = payoutPct.coerceIn(1.0, 100.0) / 100.0
+        val breakEven = 100.0 / (1.0 + payout)
+        val expectancy = if (holdout.trades == 0) 0.0 else holdout.netUnits / holdout.trades
+        val assessment = when {
+            candles.size < 100 -> "INSUFFICIENT HISTORY · load at least 100 candles"
+            holdout.trades < 30 -> "LOW SAMPLE · collect at least 30 holdout trades before judging"
+            holdout.netUnits <= 0.0 -> "NO OUT-OF-SAMPLE EDGE · do not promote this strategy"
+            holdout.winRatePct <= breakEven -> "BELOW BREAK-EVEN · estimated holdout win rate does not clear payout hurdle"
+            else -> "PROMISING HOLDOUT · continue demo validation; this is not proof of future profitability"
+        }
+        return WalkForwardReport(strategy, training, holdout, split, candles.size, breakEven, expectancy, assessment)
+    }
 
     fun run(candles: List<Candle>, strategy: BacktestStrategy, payoutPct: Double = 80.0, expiryBars: Int = 1): BacktestReport {
         val safeExpiry = expiryBars.coerceIn(1, 20)
