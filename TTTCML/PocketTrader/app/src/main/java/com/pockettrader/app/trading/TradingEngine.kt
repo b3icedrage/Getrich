@@ -112,6 +112,26 @@ class TradingEngine(context: Context) {
     init {
         scope.launch { client.events.collect { onEvent(it) } }
         scope.launch {
+            var wasConnected = false
+            client.state.collect { state ->
+                when (state) {
+                    ConnState.CONNECTED -> {
+                        wasConnected = true
+                        TradingService.start(app, _account.value)
+                    }
+                    ConnState.AUTH_FAILED -> TradingService.stop(app)
+                    ConnState.DISCONNECTED -> if (wasConnected) {
+                        delay(3_000)
+                        if (client.state.value == ConnState.DISCONNECTED) {
+                            log("Background connection lost; reconnecting...")
+                            connect()
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        scope.launch {
             while (isActive) {
                 delay(250)
                 tickClock()
@@ -156,8 +176,18 @@ class TradingEngine(context: Context) {
 
     fun disconnect() {
         setAuto(false, "Disconnected")
+        TradingService.stop(app)
         _lastTickAtMs.value = 0L
         client.disconnect()
+    }
+
+    /** Called only by the sticky foreground service after Android recreates the process. */
+    fun resumeBackgroundConnection(accountName: String) {
+        val wanted = runCatching { AccountType.valueOf(accountName) }.getOrDefault(AccountType.DEMO)
+        if (_account.value != wanted) _account.value = wanted
+        if (client.state.value == ConnState.DISCONNECTED || client.state.value == ConnState.AUTH_FAILED) {
+            connect()?.let { log("Background reconnect blocked: $it") }
+        }
     }
 
     /** Caller (UI) must already have confirmed a switch to REAL. */
@@ -586,7 +616,7 @@ class TradingEngine(context: Context) {
         _auto.value = on
         _autoStatus.value = if (on) "Running on ${_account.value}" else "Stopped" + (reason?.let { ": $it" } ?: "")
         log("Autotrader ${if (on) "STARTED on ${_account.value}" else "STOPPED"}${reason?.let { " ($it)" } ?: ""}")
-        if (on) TradingService.start(app, _account.value) else TradingService.stop(app)
+        if (on) TradingService.start(app, _account.value)
     }
 
     fun emergencyStop() = setAuto(false, "STOP pressed")
