@@ -5,7 +5,6 @@ import com.pockettrader.app.Notifier
 import com.pockettrader.app.TradingService
 import com.pockettrader.app.data.SecureStore
 import com.pockettrader.app.protocol.Asset
-import com.pockettrader.app.protocol.Candle
 import com.pockettrader.app.protocol.ConnState
 import com.pockettrader.app.protocol.Deal
 import com.pockettrader.app.protocol.Direction
@@ -27,7 +26,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicBoolean
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -64,7 +62,6 @@ class TradingEngine(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = PocketClient(scope)
     private val nemotron = NemotronClient()
-    private val aiDecisionInFlight = AtomicBoolean(false)
     private val lock = Any()
 
     val connState: StateFlow<ConnState> = client.state
@@ -82,8 +79,13 @@ class TradingEngine(context: Context) {
     private val riskManager = RiskManager(_risk.value)
     private val _riskState = MutableStateFlow(riskManager.state); val riskState: StateFlow<RiskState> = _riskState
     private val _aiConfigured = MutableStateFlow(store.loadNvidiaApiKey().isNotBlank()); val aiConfigured: StateFlow<Boolean> = _aiConfigured
-    private val _aiStatus = MutableStateFlow(if (_aiConfigured.value) "API key saved · not yet tested" else "API key required")
+    private val _aiStatus = MutableStateFlow(if (_aiConfigured.value) "NVIDIA key saved · chat ready" else "API key required for AI chat")
     val aiStatus: StateFlow<String> = _aiStatus
+    data class ChatMessage(val role: String, val content: String, val timeMs: Long = System.currentTimeMillis())
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(listOf(ChatMessage("assistant", "Hi! I’m Nemotron. Ask me about trading concepts, indicators, risk management, or how PocketTrader works.")))
+    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages
+    private val _chatBusy = MutableStateFlow(false)
+    val chatBusy: StateFlow<Boolean> = _chatBusy
     private val _auto = MutableStateFlow(false); val autoEnabled: StateFlow<Boolean> = _auto
     private val _autoStatus = MutableStateFlow("Off"); val autoStatus: StateFlow<String> = _autoStatus
     private val _sessions = MutableStateFlow(sessionFlags()); val sessions: StateFlow<Pair<Boolean, Boolean>> = _sessions
@@ -186,7 +188,7 @@ class TradingEngine(context: Context) {
         if (cleaned.length < 20) return "That API key looks too short. Paste the NVIDIA API key from build.nvidia.com."
         store.saveNvidiaApiKey(cleaned)
         _aiConfigured.value = true
-        _aiStatus.value = "NVIDIA key saved securely on this phone"
+        _aiStatus.value = "NVIDIA key saved securely · chat ready"
         log("NVIDIA Nemotron API key saved (value hidden)")
         return null
     }
@@ -194,8 +196,38 @@ class TradingEngine(context: Context) {
     fun clearNvidiaApiKey() {
         store.clearNvidiaApiKey()
         _aiConfigured.value = false
-        _aiStatus.value = "API key required"
-        if (_auto.value) setAuto(false, "NVIDIA API key removed")
+        _aiStatus.value = "API key required for AI chat"
+    }
+
+    fun sendChatMessage(raw: String) {
+        val message = raw.trim()
+        if (message.isBlank() || _chatBusy.value) return
+        if (!_aiConfigured.value) {
+            _chatMessages.update { it + ChatMessage("assistant", "Add your NVIDIA API key in this Chat tab to start chatting.") }
+            return
+        }
+        val prior = _chatMessages.value
+        _chatMessages.value = prior + ChatMessage("user", message)
+        _chatBusy.value = true
+        _aiStatus.value = "Nemotron is replying…"
+        scope.launch {
+            try {
+                val history = prior.filter { it.role == "user" || it.role == "assistant" }.map { ChatTurn(it.role, it.content) }
+                val reply = nemotron.chat(store.loadNvidiaApiKey(), history, message)
+                _chatMessages.update { it + ChatMessage("assistant", reply) }
+                _aiStatus.value = "Chat connected"
+            } catch (e: Exception) {
+                val detail = (e.message ?: "Unknown NVIDIA API error").take(240)
+                _chatMessages.update { it + ChatMessage("assistant", "I couldn’t reach Nemotron: $detail. Check your connection and API key, then try again.") }
+                _aiStatus.value = "Chat error · check API key or connection"
+            } finally {
+                _chatBusy.value = false
+            }
+        }
+    }
+
+    fun clearChat() {
+        _chatMessages.value = listOf(ChatMessage("assistant", "Chat cleared. What would you like to explore?"))
     }
 
     private fun onEvent(e: PocketEvent) {
@@ -299,11 +331,6 @@ class TradingEngine(context: Context) {
             log("AI Autotrader start blocked: real-account execution is disabled")
             return
         }
-        if (on && !_aiConfigured.value) {
-            _autoStatus.value = "Blocked: add your NVIDIA API key first"
-            log("Autotrader start blocked: NVIDIA API key required")
-            return
-        }
         if (_auto.value == on) return
         _auto.value = on
         _autoStatus.value = if (on) "Running on ${_account.value}" else "Stopped" + (reason?.let { ": $it" } ?: "")
@@ -324,7 +351,7 @@ class TradingEngine(context: Context) {
         }
     }
 
-    /** Every automatic order must first pass Nemotron; API failures and uncertain outputs fail closed. */
+    /** Automatic orders follow the selected technical strategy and live broker feed; Nemotron is chat-only. */
     private fun autoExecute(sig: Signal) {
         val block = autoBlockReason(sig)
         if (block != null) {
@@ -333,53 +360,12 @@ class TradingEngine(context: Context) {
             if (riskLimitHit(block)) setAuto(false, block)
             return
         }
-        if (!aiDecisionInFlight.compareAndSet(false, true)) {
-            _autoStatus.value = "Waiting for current Nemotron analysis"
-            log("Autotrader skipped overlapping signal #${sig.id}: AI analysis already running")
-            return
-        }
-        _aiStatus.value = "Nemotron analyzing ${sig.asset}…"
-        _autoStatus.value = "AI reviewing ${sig.asset} setup…"
-        scope.launch {
-            try {
-                val key = store.loadNvidiaApiKey()
-                val candles = synchronized(lock) { signalEngine.ltf.candles.takeLast(30) }
-                val payout = _assets.value.firstOrNull { it.symbol == sig.asset }?.payout
-                val decision = nemotron.analyze(key, sig, candles, payout)
-                if (!_auto.value) return@launch
-                if (!decision.shouldTrade || decision.direction == null) {
-                    _aiStatus.value = "NO TRADE · ${decision.confidence}% score"
-                    _autoStatus.value = "Nemotron says NO TRADE"
-                    log("Nemotron rejected signal #${sig.id}: ${decision.rationale}")
-                    return@launch
-                }
-                val approvedSignal = sig.copy(
-                    direction = decision.direction,
-                    reason = "Nemotron ${decision.confidence}/100: ${decision.rationale}"
-                )
-                val finalBlock = autoBlockReason(approvedSignal)
-                if (finalBlock != null) {
-                    _autoStatus.value = "AI approved but risk guard blocked: $finalBlock"
-                    log("AI-approved signal blocked by risk guard: $finalBlock")
-                    if (riskLimitHit(finalBlock)) setAuto(false, finalBlock)
-                    return@launch
-                }
-                _aiStatus.value = "Approved ${decision.direction.label} · ${decision.confidence}/100"
-                _autoStatus.value = "Nemotron approved ${decision.direction.label}; sending order"
-                val err = place(approvedSignal.asset, _risk.value.stake, approvedSignal.direction,
-                    approvedSignal.expirySec, TradeSource.AUTO, approvedSignal.id)
-                if (err != null) {
-                    _autoStatus.value = "Order failed: $err"
-                    log("Autotrader order error: $err")
-                }
-            } catch (e: Exception) {
-                val reason = (e.message ?: "Unknown NVIDIA API error").take(220)
-                _aiStatus.value = "AI error · no order sent"
-                _autoStatus.value = "Nemotron unavailable; trade skipped"
-                log("Nemotron request failed; fail-closed, no order sent: $reason")
-            } finally {
-                aiDecisionInFlight.set(false)
-            }
+        val err = place(sig.asset, _risk.value.stake, sig.direction, sig.expirySec, TradeSource.AUTO, sig.id)
+        if (err != null) {
+            _autoStatus.value = "Order failed: $err"
+            log("Autotrader order error: $err")
+        } else {
+            _autoStatus.value = "Placed ${sig.direction.label} ${sig.asset} from live-feed signal"
         }
     }
 
