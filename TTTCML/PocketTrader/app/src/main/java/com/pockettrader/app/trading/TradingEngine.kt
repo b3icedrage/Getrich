@@ -96,6 +96,9 @@ class TradingEngine(context: Context) {
     private val _auto = MutableStateFlow(false); val autoEnabled: StateFlow<Boolean> = _auto
     private val _autoStatus = MutableStateFlow("Off"); val autoStatus: StateFlow<String> = _autoStatus
     private val _sessions = MutableStateFlow(sessionFlags()); val sessions: StateFlow<Pair<Boolean, Boolean>> = _sessions
+    // Independent candle engines let TT scan every active broker-listed pair.
+    private val marketEngines = mutableMapOf<String, SignalEngine>()
+    private val marketTickAtMs = mutableMapOf<String, Long>()
     private val signalEngine = SignalEngine(_strategy.value)
     init { signalEngine.minConfluenceScore = _minConfluence.value }
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
@@ -145,6 +148,7 @@ class TradingEngine(context: Context) {
         if (s.isDemo != demo) return "Saved session type does not match the selected account"
         signalEngine.reset(); _price.value = null; _balance.value = null; _lastTickAtMs.value = 0L
         _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
+        synchronized(lock) { marketEngines.clear(); marketTickAtMs.clear() }
         client.watch(_asset.value, _strategy.value.timeframeSec)
         client.connect(s)
         return null
@@ -189,7 +193,10 @@ class TradingEngine(context: Context) {
     fun updateStrategy(c: StrategyConfig) {
         val old = _strategy.value
         _strategy.value = c; store.saveStrategy(c)
-        synchronized(lock) { signalEngine.reconfigure(c) }
+        synchronized(lock) {
+            signalEngine.reconfigure(c)
+            marketEngines.values.forEach { it.reconfigure(c); it.minConfluenceScore = _minConfluence.value }
+        }
         if (old.timeframeSec != c.timeframeSec || old.higherTimeframeSec != c.higherTimeframeSec) {
             client.watch(_asset.value, c.timeframeSec); requestHistory()
         }
@@ -345,20 +352,48 @@ class TradingEngine(context: Context) {
                 if (e.isDemo == null || e.isDemo == demoNow) _balance.value = e.amount
             }
             is PocketEvent.Assets -> {
-                _assets.value = e.assets.sortedWith(compareByDescending<Asset> { it.isActive }.thenByDescending { it.payout }.thenBy { it.name })
-                if (connState.value == ConnState.CONNECTED && signalEngine.ltf.candles.isEmpty()) requestHistory()
+                val listed = e.assets.sortedWith(compareByDescending<Asset> { it.isActive }.thenByDescending { it.payout }.thenBy { it.name })
+                _assets.value = listed
+                if (connState.value == ConnState.CONNECTED) {
+                    // Scan all active Pocket Option pairs, including OTC pairs. The chart
+                    // selection remains independent; only TT uses this market-wide feed.
+                    val activeAssets = listed.filter { it.isActive }
+                    synchronized(lock) {
+                        val symbols = activeAssets.map { it.symbol }.toSet()
+                        marketEngines.keys.retainAll(symbols)
+                        marketTickAtMs.keys.retainAll(symbols)
+                        activeAssets.forEach { asset ->
+                            if (!marketEngines.containsKey(asset.symbol)) {
+                                val scanner = SignalEngine(_strategy.value).also { it.minConfluenceScore = _minConfluence.value }
+                                marketEngines[asset.symbol] = scanner
+                                client.subscribeMarket(asset.symbol)
+                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 120)
+                                client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 120)
+                            }
+                        }
+                    }
+                    if (signalEngine.ltf.candles.isEmpty()) requestHistory()
+                    log("TT market scan subscribed to " + activeAssets.size + " active pairs (including OTC where listed)")
+                }
             }
             is PocketEvent.History -> onHistory(e)
             is PocketEvent.Ticks -> {
-                val sym = _asset.value
+                val selected = _asset.value
                 val now = System.currentTimeMillis()
                 for (t in e.ticks) {
-                    if (t.symbol != sym) continue
-                    _price.value = t.price
-                    _lastTickAtMs.value = now
-                    _priceHistory.update { (it + (now to t.price)).takeLast(180) }
-                    val sig = synchronized(lock) { signalEngine.onTick(sym, t.timeSec, t.price, now) }
-                    sig?.let { onSignal(it) }
+                    val scanner = synchronized(lock) {
+                        marketTickAtMs[t.symbol] = now
+                        marketEngines[t.symbol]
+                    }
+                    if (t.symbol == selected) {
+                        _price.value = t.price
+                        _lastTickAtMs.value = now
+                        _priceHistory.update { (it + (now to t.price)).takeLast(180) }
+                        // Keep the selected chart/manual-analysis engine warm. The
+                        // market-wide signal engine below generates TT signals.
+                        synchronized(lock) { signalEngine.onTick(t.symbol, t.timeSec, t.price, now) }
+                    }
+                    scanner?.onTick(t.symbol, t.timeSec, t.price, now)?.let { onSignal(it) }
                 }
                 synchronized(lock) { _candleHistory.value = signalEngine.ltf.candles }
                 _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
@@ -371,30 +406,41 @@ class TradingEngine(context: Context) {
 
     private fun onHistory(e: PocketEvent.History) {
         val snap = e.snapshot
-        if (snap.asset.isNotEmpty() && snap.asset != _asset.value) return
+        if (snap.asset.isEmpty()) return
         synchronized(lock) {
             val c = _strategy.value
-            listOf(signalEngine.ltf, signalEngine.htf).forEach { agg ->
-                val candles = snap.candles.takeIf { snap.period == agg.periodSec } ?: emptyList()
-                // Only seed when it adds data; live candles are never thrown away for less history.
-                if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
-                else if (candles.isEmpty() && agg.candles.isEmpty() && snap.ticks.isNotEmpty()) agg.seed(emptyList(), snap.ticks)
+            val targets = buildList {
+                if (snap.asset == _asset.value) add(signalEngine)
+                marketEngines[snap.asset]?.let { if (it !== signalEngine) add(it) }
             }
-            _candleHistory.value = signalEngine.ltf.candles
-            _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
+            targets.forEach { target ->
+                listOf(target.ltf, target.htf).forEach { agg ->
+                    val candles = snap.candles.takeIf { snap.period == agg.periodSec } ?: emptyList()
+                    // Only seed when it adds data; live candles are never thrown away for less history.
+                    if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
+                    else if (candles.isEmpty() && agg.candles.isEmpty() && snap.ticks.isNotEmpty()) agg.seed(emptyList(), snap.ticks)
+                }
+            }
+            if (snap.asset == _asset.value) {
+                _candleHistory.value = signalEngine.ltf.candles
+                _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
+                snap.ticks.lastOrNull()?.let { if (_price.value == null) _price.value = it.second }
+            }
             if (c.timeframeSec == snap.period || c.higherTimeframeSec == snap.period)
                 log("History ${snap.asset} ${snap.period}s: ${snap.candles.size} candles, ${snap.ticks.size} ticks")
         }
-        snap.ticks.lastOrNull()?.let { if (_price.value == null) _price.value = it.second }
     }
 
     private fun tickClock() {
         if (connState.value != ConnState.CONNECTED) return
-        val sym = _asset.value
-        val feedFresh = _lastTickAtMs.value > 0L && System.currentTimeMillis() - _lastTickAtMs.value <= MAX_TICK_AGE_MS
-        if (feedFresh) {
-            val sig = synchronized(lock) { signalEngine.onClock(sym, client.serverNowSec(), System.currentTimeMillis()) }
-            sig?.let { onSignal(it) }
+        val now = System.currentTimeMillis()
+        val freshScanners = synchronized(lock) {
+            marketEngines.entries.filter { (symbol, _) ->
+                now - (marketTickAtMs[symbol] ?: 0L) <= MAX_TICK_AGE_MS
+            }.toList()
+        }
+        freshScanners.forEach { (symbol, scanner) ->
+            scanner.onClock(symbol, client.serverNowSec(), now)?.let { onSignal(it) }
         }
         expireStaleTrades()
     }
@@ -446,7 +492,10 @@ class TradingEngine(context: Context) {
         val selected = value.takeIf { it in listOf(40, 50, 60, 70, 80, 90) } ?: 80
         _minConfluence.value = selected
         store.saveMinConfluence(selected)
-        synchronized(lock) { signalEngine.minConfluenceScore = selected }
+        synchronized(lock) {
+            signalEngine.minConfluenceScore = selected
+            marketEngines.values.forEach { it.minConfluenceScore = selected }
+        }
         log("Minimum signal confluence set to $selected%")
     }
 
@@ -480,10 +529,11 @@ class TradingEngine(context: Context) {
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}) at ${sig.confluenceScore}% confluence: ${sig.reason}")
-        if (_auto.value) {
+        if (_auto.value && sig.asset == _asset.value) {
+            // TT discovery across the market must not silently change the execution pair.
             _pendingSignal.value = null
             autoExecute(sig)
-        } else {
+        } else if (sig.asset == _asset.value) {
             _pendingSignal.value = sig
         }    }
 
