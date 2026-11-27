@@ -149,7 +149,7 @@ fun AppRoot(engine: TradingEngine) {
             when (activeTab) {
                 Tab.TRADE -> TradeScreen(engine) { message = it }
                 Tab.SIGNALS -> SignalsScreen(engine)
-                Tab.TT -> TTScreen(engine)
+                Tab.TT -> TTScreen(engine) { message = it }
                 Tab.ANALYTICS -> AnalyticsScreen(engine)
                 Tab.CHAT -> ChatScreen(engine) { message = it }
                 Tab.AUTO -> AutoScreen(engine) { message = it }
