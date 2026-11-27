@@ -401,8 +401,8 @@ class TradingEngine(context: Context) {
                                 val scanner = SignalEngine(_strategy.value).also { it.minConfluenceScore = _minConfluence.value }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
-                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 120)
-                                client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 120)
+                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 240)
+                                client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 240)
                             }
                         }
                     }
