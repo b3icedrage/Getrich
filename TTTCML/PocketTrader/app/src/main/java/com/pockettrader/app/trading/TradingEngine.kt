@@ -499,7 +499,7 @@ class TradingEngine(context: Context) {
             val confluence = com.pockettrader.app.signals.IndicatorConfluence.analyze(
                 ltfCandles, htfCandles, minScore = _minConfluence.value
             )
-            val strictBlock = com.pockettrader.app.signals.SmartEntryRules.rejection(ltfCandles, htfCandles, decision.direction)
+            val strictBlock = com.pockettrader.app.signals.SmartEntryRules.rejection(ltfCandles, signalEngine.htf.candles, decision.direction)
             if (strictBlock != null) {
                 log("Manual signal blocked by smart entry rules: $strictBlock")
                 return@synchronized null
