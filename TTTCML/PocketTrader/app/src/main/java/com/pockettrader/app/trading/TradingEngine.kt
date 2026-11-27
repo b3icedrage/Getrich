@@ -419,7 +419,8 @@ class TradingEngine(context: Context) {
                 return@synchronized null
             }
             val technical = analyseTechnicalMarket(ltfCandles)
-            if (technical.direction != decision.direction) {                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
+            if (technical.direction != decision.direction) {
+                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
                 return@synchronized null
             }
             Signal(
