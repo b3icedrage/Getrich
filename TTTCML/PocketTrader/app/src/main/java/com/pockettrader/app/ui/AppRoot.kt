@@ -346,7 +346,7 @@ fun SignalsScreen(engine: TradingEngine) {
                         else "No valid setup yet. Wait for more closed candles or review strategy settings."
                 }, enabled = conn == ConnState.CONNECTED,
                     modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(15.dp)) {
-                    Icon(Icons.Default.AutoAwesome, null)
+                    Icon(Icons.Default.ShowChart, null)
                     Spacer(Modifier.width(8.dp))
                     Text("GENERATE SIGNAL", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                 }
