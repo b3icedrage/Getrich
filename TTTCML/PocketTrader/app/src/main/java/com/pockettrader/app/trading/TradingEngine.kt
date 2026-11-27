@@ -851,14 +851,12 @@ class TradingEngine(context: Context) {
         log("Result ${r.asset}: $status ${"%+.2f".format(net)}")
         Notifier.result(app, r)
         client.refreshBalance()
-        {
-            val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
+        val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onClosed(net, dayKey())
             if (isActiveAccount) {
                 _riskState.value = manager.state
                 if (_auto.value) manager.blockReason(dayKey())?.takeIf { riskLimitHit(it) }?.let { setAuto(false, it) }
-            }
         }
     }
 
@@ -870,11 +868,9 @@ class TradingEngine(context: Context) {
             updateTrade({ it.requestId == t.requestId }) { it.copy(status = TradeStatus.UNKNOWN, note = "No result received; check Pocket Option history") }
             log("No result for ${t.asset} trade; marked UNKNOWN")
             if (t.signalId != null) updateSignalAudit(t.signalId) { it.copy(brokerResult = TradeStatus.UNKNOWN, netReturn = -t.amount) }
-            {
-                val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
+            val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
                 manager.onClosed(-t.amount, dayKey())
-                if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
-            }
+            if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
         }
     }
 }
