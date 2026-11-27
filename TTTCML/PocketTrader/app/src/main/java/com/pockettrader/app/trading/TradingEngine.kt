@@ -91,6 +91,7 @@ class TradingEngine(context: Context) {
     private val _sessions = MutableStateFlow(sessionFlags()); val sessions: StateFlow<Pair<Boolean, Boolean>> = _sessions
     private val signalEngine = SignalEngine(_strategy.value)
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
+    private val _lastTickAtMs = MutableStateFlow(0L)
 
     init {
         scope.launch { client.events.collect { onEvent(it) } }
@@ -248,6 +249,7 @@ class TradingEngine(context: Context) {
                 for (t in e.ticks) {
                     if (t.symbol != sym) continue
                     _price.value = t.price
+                    _lastTickAtMs.value = now
                     val sig = synchronized(lock) { signalEngine.onTick(sym, t.timeSec, t.price, now) }
                     sig?.let { onSignal(it) }
                 }
@@ -280,14 +282,21 @@ class TradingEngine(context: Context) {
     private fun tickClock() {
         if (connState.value != ConnState.CONNECTED) return
         val sym = _asset.value
-        val sig = synchronized(lock) { signalEngine.onClock(sym, client.serverNowSec(), System.currentTimeMillis()) }
-        sig?.let { onSignal(it) }
+        val feedFresh = _lastTickAtMs.value > 0L && System.currentTimeMillis() - _lastTickAtMs.value <= MAX_TICK_AGE_MS
+        if (feedFresh) {
+            val sig = synchronized(lock) { signalEngine.onClock(sym, client.serverNowSec(), System.currentTimeMillis()) }
+            sig?.let { onSignal(it) }
+        }
         expireStaleTrades()
     }
 
     /** Manual signal generation independent of Auto Trader's candle-close listener. */
     fun generateSignalForSelectedAsset(): Signal? {
         if (connState.value != ConnState.CONNECTED) return null
+        if (_lastTickAtMs.value == 0L || System.currentTimeMillis() - _lastTickAtMs.value > MAX_TICK_AGE_MS) {
+            log("Signal skipped: live market feed is stale or unavailable")
+            return null
+        }
         val cfg = _strategy.value
         val sym = _asset.value
         val result = synchronized(lock) {
@@ -345,6 +354,7 @@ class TradingEngine(context: Context) {
         val payout = _assets.value.firstOrNull { it.symbol == sig.asset }?.payout
         return when {
             connState.value != ConnState.CONNECTED -> "not connected"
+            _lastTickAtMs.value == 0L || System.currentTimeMillis() - _lastTickAtMs.value > MAX_TICK_AGE_MS -> "live market feed is stale"
             riskManager.isLate(sig.entryAtSec, client.serverNowSec()) -> "signal late (> ${_risk.value.maxSignalDelaySec}s)"
             payout != null && payout < cfg.minPayout -> "payout $payout% < ${cfg.minPayout}%"
             else -> riskManager.blockReason(dayKey())
@@ -368,6 +378,8 @@ class TradingEngine(context: Context) {
             _autoStatus.value = "Placed ${sig.direction.label} ${sig.asset} from live-feed signal"
         }
     }
+
+    private companion object { const val MAX_TICK_AGE_MS = 15_000L }
 
     private fun riskLimitHit(reason: String) =
         reason.startsWith("Max trades") || reason.startsWith("Daily") || reason.startsWith("Max consecutive") || reason.startsWith("Next stake")
