@@ -2,6 +2,10 @@ package com.pockettrader.app.trading
 
 data class RiskConfig(
     val stake: Double = 1.0,
+    /** Auto stake as a percentage of the current broker balance. */
+    val stakePercent: Double = 1.0,
+    /** Do not auto-trade when the percentage amount is below this broker minimum. */
+    val minimumStake: Double = 1.0,
     val maxTradesPerSession: Int = 10,
     /** Stop for the day once net P/L <= -dailyStopLoss (account currency). 0 = off. */
     val dailyStopLoss: Double = 10.0,
