@@ -70,8 +70,8 @@ object HiddenMarkovRegimeModel {
         }
         val returns = closes.zipWithNext { a, b -> abs(ln(b / a)) }
         val sorted = returns.sorted()
-        val q1 = sorted[(sorted.size * 0.33).coerceIn(0, sorted.lastIndex)]
-        val q2 = sorted[(sorted.size * 0.66).coerceIn(0, sorted.lastIndex)]
+        val q1 = sorted[(sorted.size * 0.33).toInt().coerceIn(0, sorted.lastIndex)]
+        val q2 = sorted[(sorted.size * 0.66).toInt().coerceIn(0, sorted.lastIndex)]
         val obs = returns.map { if (it <= q1) 0 else if (it <= q2) 1 else 2 }.toIntArray()
         if (q2 <= 1e-12) return RegimeEstimate(MarketRegime.STABLE, 1.0, listOf(1.0, 0.0, 0.0), obs.size)
 
@@ -85,6 +85,7 @@ object HiddenMarkovRegimeModel {
             val gamma = Array(obs.size) { t ->
                 val row = DoubleArray(STATES) { s -> alpha[t][s] * beta[t][s] }
                 normalize(row)
+                row
             }
             val xiSum = Array(STATES) { DoubleArray(STATES) }
             val gammaSum = Array(STATES) { DoubleArray(SYMBOLS) }
@@ -159,7 +160,7 @@ object KernelDensityTailEstimator {
         val mean = sample.average()
         val sd = sqrt(sample.sumOf { (it - mean) * (it - mean) } / (sample.size - 1))
         if (sd <= 1e-12) return null
-        val bandwidth = max(1.06 * sd * sample.size.pow(-0.2), sd * 0.05)
+        val bandwidth = max(1.06 * sd * sample.size.toDouble().pow(-0.2), sd * 0.05)
         val cdf = sample.sumOf { normalCdf((observedResidual - it) / bandwidth) } / sample.size
         return KdeTailResult(cdf.coerceIn(0.0, 1.0), (1.0 - cdf).coerceIn(0.0, 1.0), sample.size)
     }
