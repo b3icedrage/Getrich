@@ -592,8 +592,8 @@ class TradingEngine(context: Context) {
         if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS)
             return "No fresh Pocket Option quote received for \${signal.asset}. Check the broker connection and try a newer signal."
         val payout = _assets.value.firstOrNull { it.symbol == signal.asset }?.payout
-        if (payout != null && payout < _strategy.value.minPayout)
-            return "\${signal.asset} payout is below your configured minimum."
+        if (payout == null || payout < _strategy.value.minPayout)
+            return "\${signal.asset} payout is unavailable or below your configured minimum."
         riskManager.blockReason(dayKey())?.let { return "Risk limit blocked this trade: $it" }
         return place(signal.asset, amount, signal.direction, signal.expirySec, TradeSource.TT, signal.id)
     }
@@ -815,11 +815,16 @@ class TradingEngine(context: Context) {
 
     private fun onOpened(d: Deal) {
         val r = updateTrade({ it.status == TradeStatus.PENDING && (it.requestId == d.requestId || (d.requestId == null && it.asset == d.asset)) }) {
-            it.copy(dealId = d.id, status = TradeStatus.OPEN)
+            it.copy(dealId = d.id, status = TradeStatus.OPEN, entryPrice = d.openPrice)
         } ?: updateTrade({ it.status == TradeStatus.PENDING && it.asset == d.asset && Math.abs(it.amount - d.amount) < 1e-6 }) {
-            it.copy(dealId = d.id, status = TradeStatus.OPEN)
+            it.copy(dealId = d.id, status = TradeStatus.OPEN, entryPrice = d.openPrice)
         }
-        if (r != null) log("Trade opened ${r.asset} (deal ${d.id.take(8)})")
+        if (r != null) {
+            if (r.signalId != null) updateSignalAudit(r.signalId) {
+                it.copy(entryPrice = d.openPrice ?: it.emittedPrice, brokerResult = TradeStatus.OPEN)
+            }
+            log("Trade opened ${r.asset} (deal ${d.id.take(8)})")
+        }
     }
 
     private fun onOpenFailed(error: String, asset: String) {
@@ -827,7 +832,7 @@ class TradingEngine(context: Context) {
             it.copy(status = TradeStatus.FAILED, note = error)
         }
         log("Order rejected: $error")
-        if (r?.source != null && r.source != TradeSource.MANUAL) {
+        if (r != null) {
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onRejected()
             if (r.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
@@ -840,10 +845,13 @@ class TradingEngine(context: Context) {
         val r = updateTrade({ it.dealId == d.id && (it.status == TradeStatus.OPEN || it.status == TradeStatus.PENDING) }) {
             it.copy(status = status, netProfit = net)
         } ?: return
+        if (r.signalId != null) updateSignalAudit(r.signalId) {
+            it.copy(entryPrice = d.openPrice ?: it.entryPrice, brokerResult = status, netReturn = net)
+        }
         log("Result ${r.asset}: $status ${"%+.2f".format(net)}")
         Notifier.result(app, r)
         client.refreshBalance()
-        if (r.source != TradeSource.MANUAL) {
+        {
             val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onClosed(net, dayKey())
@@ -861,7 +869,8 @@ class TradingEngine(context: Context) {
         for (t in stale) {
             updateTrade({ it.requestId == t.requestId }) { it.copy(status = TradeStatus.UNKNOWN, note = "No result received; check Pocket Option history") }
             log("No result for ${t.asset} trade; marked UNKNOWN")
-            if (t.source != TradeSource.MANUAL) {
+            if (t.signalId != null) updateSignalAudit(t.signalId) { it.copy(brokerResult = TradeStatus.UNKNOWN, netReturn = -t.amount) }
+            {
                 val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
                 manager.onClosed(-t.amount, dayKey())
                 if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
