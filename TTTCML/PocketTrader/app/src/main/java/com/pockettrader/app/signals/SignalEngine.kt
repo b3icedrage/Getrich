@@ -2,6 +2,7 @@ package com.pockettrader.app.signals
 
 import com.pockettrader.app.protocol.Candle
 import com.pockettrader.app.protocol.Direction
+import java.util.concurrent.atomic.AtomicLong
 
 data class Signal(
     val id: Long,
@@ -31,7 +32,7 @@ class SignalEngine(cfg: StrategyConfig) {
     var htf = CandleAggregator(cfg.higherTimeframeSec)
         private set
     private var lastEvaluated = Long.MIN_VALUE
-    private var nextId = 1L
+    private companion object { val globalSignalIds = AtomicLong(1L) }
 
     fun reconfigure(cfg: StrategyConfig) {
         val tfChanged = cfg.timeframeSec != config.timeframeSec || cfg.higherTimeframeSec != config.higherTimeframeSec
@@ -70,7 +71,7 @@ class SignalEngine(cfg: StrategyConfig) {
         val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
         val reason = "${d.reason} | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
         val score = if (d.direction == Direction.CALL) analysis.callScore else analysis.putScore
-        return Signal(nextId++, asset, d.direction, d.strategy, reason,
+        return Signal(globalSignalIds.getAndIncrement(), asset, d.direction, d.strategy, reason,
             closed.startSec + config.timeframeSec, config.expirySec, nowMs, score)
     }
 }
