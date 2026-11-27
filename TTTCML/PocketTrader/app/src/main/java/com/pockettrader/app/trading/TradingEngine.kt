@@ -604,12 +604,35 @@ class TradingEngine(context: Context) {
         return place(signal.asset, amount, signal.direction, signal.expirySec, TradeSource.MANUAL, signal.id)
     }
 
+    private fun recordSignal(signal: Signal) {
+        _signalJournal.update { rows ->
+            if (rows.any { it.signal.id == signal.id }) rows
+            else (listOf(SignalAuditRecord(signal, _account.value, signal.referencePrice)) + rows).take(1000)
+        }
+    }
+
+    private fun updateSignalAudit(id: Long, change: (SignalAuditRecord) -> SignalAuditRecord) {
+        _signalJournal.update { rows -> rows.map { if (it.signal.id == id) change(it) else it } }
+    }
+
+    fun exportSignalJournalCsv(): String {
+        val header = "signal_id,asset,direction,confluence,account,emitted_at,reference_price,entry_price,expiry_seconds,expiry_at,broker_result,net_return,trade_request_id"
+        fun csv(value: Any?): String = "\"" + (value?.toString() ?: "").replace("\"", "\"\"") + "\""
+        return (listOf(header) + _signalJournal.value.asReversed().map { row ->
+            listOf(row.signal.id, row.signal.asset, row.signal.direction.label, row.signal.confluenceScore,
+                row.account, row.signal.emittedAtMs, row.emittedPrice, row.entryPrice, row.signal.expirySec,
+                row.expiryAtMs, row.brokerResult, row.netReturn, row.tradeRequestId)
+                .joinToString(",") { csv(it) }
+        }).joinToString("\n")
+    }
+
     // ---------------- signals & autotrader ----------------
 
     private fun onSignal(sig: Signal) {
         // TT must show market-wide confluence candidates even when the separate
         // execution-quality filter rejects them. Keep discovery and trade approval apart.
         _ttSignals.update { (listOf(sig) + it).distinctBy { item -> item.id }.take(100) }
+        recordSignal(sig)
         if (sig.confluenceScore < _minConfluence.value) {
             log("TT watchlist: ${sig.asset} ${sig.direction.label} at ${sig.confluenceScore}% is near the ${_minConfluence.value}% threshold; no order placed")
             return
@@ -736,18 +759,47 @@ class TradingEngine(context: Context) {
     fun placeManual(direction: Direction, amount: Double, expirySec: Int): String? =
         place(_asset.value, amount, direction, expirySec, TradeSource.MANUAL, null)
 
-    private fun place(asset: String, amount: Double, direction: Direction, expirySec: Int, source: TradeSource, signalId: Long?): String? {
-        if (amount <= 0) return "Amount must be above 0"
+    private fun validateOrder(asset: String, amount: Double, expirySec: Int): String? {
         if (connState.value != ConnState.CONNECTED) return "Not connected"
+        val demo = _account.value == AccountType.DEMO
+        if (client.isDemo != demo) return "Session/account mismatch. Reconnect to the selected account."
+        val listed = _assets.value.firstOrNull { it.symbol == asset }
+            ?: return "Asset $asset is not in the current broker asset list."
+        if (!listed.isActive) return "Asset $asset is not currently active at the broker."
+        if (!amount.isFinite() || amount < _risk.value.minimumStake)
+            return "Amount is invalid or below the configured broker minimum."
+        val currentBalance = _balance.value
+        if (currentBalance == null || !currentBalance.isFinite() || amount > currentBalance)
+            return "A valid broker balance is required and the stake cannot exceed it."
+        if (expirySec !in 5..3600) return "Expiry must be between 5 and 3600 seconds."
+        if (listed.payout <= 0 || listed.payout < _strategy.value.minPayout)
+            return "Payout is unavailable or below the configured ${_strategy.value.minPayout}% minimum."
         val now = System.currentTimeMillis()
         val tickAt = synchronized(lock) { marketTickAtMs[asset] ?: if (asset == _asset.value) _lastTickAtMs.value else 0L }
-        if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS) return "Live quote for $asset is stale. Wait for a fresh Pocket Option price before ordering."
+        if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS)
+            return "Live quote for $asset is stale. Wait for a fresh Pocket Option price before ordering."
+        sessionTimeBlockReason()?.let { return it }
+        riskManager.config = _risk.value.copy(stake = amount)
+        riskManager.blockReason(dayKey())?.let { return "Risk limit blocked this order: $it" }
+        return null
+    }
+
+    private fun place(asset: String, amount: Double, direction: Direction, expirySec: Int, source: TradeSource, signalId: Long?): String? {
+        validateOrder(asset, amount, expirySec)?.let { return it }
+        if (signalId != null) synchronized(lock) {
+            if (!claimedSignalIds.add(signalId)) return "This signal has already been submitted. Duplicate order blocked."
+            while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
+        }
         val demo = client.isDemo
-        if (demo != (_account.value == AccountType.DEMO)) return "Session/account mismatch, reconnect"
-        val id = client.openOrder(asset, amount, direction, expirySec) ?: return "Could not send order"
-        val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, System.currentTimeMillis())
+        val sentAt = System.currentTimeMillis()
+        val id = client.openOrder(asset, amount, direction, expirySec)
+            ?: return "Order submission failed. This signal remains consumed to prevent duplicate submissions."
+        val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt)
         _trades.update { (listOf(rec) + it).take(500) }
-        if (source != TradeSource.MANUAL) { riskManager.onOpened(); _riskState.value = riskManager.state }
+        riskManager.onOpened(); _riskState.value = riskManager.state
+        if (signalId != null) updateSignalAudit(signalId) {
+            it.copy(expiryAtMs = sentAt + expirySec * 1000L, brokerResult = TradeStatus.PENDING, tradeRequestId = id)
+        }
         log("Order sent: ${direction.label} $asset ${"%.2f".format(amount)} ${expirySec}s ${if (demo) "DEMO" else "REAL"} [$source]")
         return null
     }
