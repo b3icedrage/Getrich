@@ -629,6 +629,11 @@ class TradingEngine(context: Context) {
             log("Autotrader start blocked: live feed is stale")
             return
         }
+        if (on && calculatedAutoStake() == null) {
+            _autoStatus.value = "Blocked: waiting for balance or percentage stake is below broker minimum"
+            log("Autotrader start blocked: percentage stake cannot be calculated safely")
+            return
+        }
         if (_auto.value == on) return
         _auto.value = on
         _autoStatus.value = if (on) "Running on ${_account.value}" else "Stopped" + (reason?.let { ": $it" } ?: "")
