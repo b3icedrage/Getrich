@@ -500,58 +500,26 @@ class TradingEngine(context: Context) {
     }
 
     /** Manual signal generation independent of Auto Trader's candle-close listener. */
+    /** Manual signal view reuses the exact same market-wide SignalEngine output for Demo and Real. */
     fun generateSignalForSelectedAsset(): Signal? {
         if (connState.value != ConnState.CONNECTED) return null
-        if (_lastTickAtMs.value == 0L || System.currentTimeMillis() - _lastTickAtMs.value > MAX_TICK_AGE_MS) {
+        val now = System.currentTimeMillis()
+        if (_lastTickAtMs.value == 0L || now - _lastTickAtMs.value > MAX_TICK_AGE_MS) {
             log("Signal skipped: live market feed is stale or unavailable")
             return null
         }
-        val cfg = _strategy.value
-        val sym = _asset.value
-        val result = synchronized(lock) {
-            val ltfCandles = signalEngine.ltf.candles
-            val htfCandles = signalEngine.htf.candles + listOfNotNull(signalEngine.htf.forming)
-            val decision = Strategies.consensus(cfg, ltfCandles, htfCandles) ?: return@synchronized null
-            val confluence = com.pockettrader.app.signals.IndicatorConfluence.analyze(
-                ltfCandles, htfCandles, minScore = _minConfluence.value
-            )
-            val strictBlock = com.pockettrader.app.signals.SmartEntryRules.rejection(ltfCandles, signalEngine.htf.candles, decision.direction)
-            if (strictBlock != null) {
-                log("Manual signal blocked by smart entry rules: $strictBlock")
-                return@synchronized null
-            }
-            val selectedPayout = _assets.value.firstOrNull { it.symbol == sym }?.payout
-            if (selectedPayout == null || selectedPayout < _strategy.value.minPayout) {
-                log("Manual signal blocked: payout unavailable or below ${_strategy.value.minPayout}%")
-                return@synchronized null
-            }
-            if (confluence.recommendation != decision.direction) {
-                log("Manual signal blocked: indicator confluence below ${_minConfluence.value}% or directional edge insufficient")
-                return@synchronized null
-            }
-            val technical = analyseTechnicalMarket(ltfCandles)
-            if (technical.direction != decision.direction) {
-                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
-                return@synchronized null
-            }
-            Signal(
-                id = System.currentTimeMillis(),
-                asset = sym,
-                direction = decision.direction,
-                strategy = decision.strategy,
-                reason = "${decision.reason} | ${confluence.summary} | CALL ${confluence.callScore}/100, PUT ${confluence.putScore}/100",
-                entryAtSec = client.serverNowSec().toLong(),
-                expirySec = cfg.expirySec,
-                emittedAtMs = System.currentTimeMillis(),
-                confluenceScore = if (decision.direction == Direction.CALL) confluence.callScore else confluence.putScore,
-                referencePrice = _price.value
-            )
-        } ?: return null
-        _ttSignals.update { (listOf(result) + it).distinctBy { item -> item.id }.take(100) }
-        _signals.update { (listOf(result) + it).take(100) }
-        recordSignal(result)
-        log("Manual signal generated: ${result.direction.label} ${result.asset} (${result.strategy.label})")
-        return result
+        val signal = _ttSignals.value.firstOrNull {
+            it.asset == _asset.value &&
+                it.confluenceScore >= _minConfluence.value &&
+                now - it.emittedAtMs in 0..MAX_TT_SIGNAL_AGE_MS
+        } ?: run {
+            log("No fresh qualifying signal from the shared market analysis engine for ${_asset.value}")
+            return null
+        }
+        _signals.update { (listOf(signal) + it).distinctBy { row -> row.id }.take(100) }
+        _pendingSignal.value = signal
+        log("Selected shared-engine signal: ${signal.direction.label} ${signal.asset} at ${signal.confluenceScore}%")
+        return signal
     }
 
     fun setMinConfluence(value: Int) {
