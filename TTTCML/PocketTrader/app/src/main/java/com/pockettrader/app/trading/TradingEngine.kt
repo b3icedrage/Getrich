@@ -381,10 +381,7 @@ class TradingEngine(context: Context) {
                 val selected = _asset.value
                 val now = System.currentTimeMillis()
                 for (t in e.ticks) {
-                    val scanner = synchronized(lock) {
-                        marketTickAtMs[t.symbol] = now
-                        marketEngines[t.symbol]
-                    }
+                    synchronized(lock) { marketTickAtMs[t.symbol] = now }
                     if (t.symbol == selected) {
                         _price.value = t.price
                         _lastTickAtMs.value = now
@@ -393,7 +390,7 @@ class TradingEngine(context: Context) {
                         // market-wide signal engine below generates TT signals.
                         synchronized(lock) { signalEngine.onTick(t.symbol, t.timeSec, t.price, now) }
                     }
-                    scanner?.onTick(t.symbol, t.timeSec, t.price, now)?.let { onSignal(it) }
+                    synchronized(lock) { marketEngines[t.symbol]?.onTick(t.symbol, t.timeSec, t.price, now) }?.let { onSignal(it) }
                 }
                 synchronized(lock) { _candleHistory.value = signalEngine.ltf.candles }
                 _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
@@ -434,14 +431,14 @@ class TradingEngine(context: Context) {
     private fun tickClock() {
         if (connState.value != ConnState.CONNECTED) return
         val now = System.currentTimeMillis()
-        val freshScanners = synchronized(lock) {
-            marketEngines.entries.filter { (symbol, _) ->
-                now - (marketTickAtMs[symbol] ?: 0L) <= MAX_TICK_AGE_MS
-            }.toList()
+        val freshSignals = synchronized(lock) {
+            marketEngines.entries.mapNotNull { (symbol, scanner) ->
+                if (now - (marketTickAtMs[symbol] ?: 0L) <= MAX_TICK_AGE_MS)
+                    scanner.onClock(symbol, client.serverNowSec(), now)
+                else null
+            }
         }
-        freshScanners.forEach { (symbol, scanner) ->
-            scanner.onClock(symbol, client.serverNowSec(), now)?.let { onSignal(it) }
-        }
+        freshSignals.forEach { onSignal(it) }
         expireStaleTrades()
     }
 
