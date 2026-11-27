@@ -814,18 +814,36 @@ class TradingEngine(context: Context) {
     }
 
     private fun place(asset: String, amount: Double, direction: Direction, expirySec: Int, source: TradeSource, signalId: Long?): String? {
-        validateOrder(asset, amount, direction, expirySec, signalId)?.let { return it }
-        if (signalId != null) synchronized(lock) {
-            if (!claimedSignalIds.add(signalId)) return "This signal has already been submitted. Duplicate order blocked."
-            while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
+        // Validate, deduplicate and reserve the risk slot as one critical section. Without
+        // this reservation, two simultaneous signals can both pass maxOpenTrades=1.
+        val reservationError = synchronized(lock) {
+            val invalid = validateOrder(asset, amount, direction, expirySec, signalId)
+            if (invalid != null) invalid
+            else if (signalId != null && claimedSignalIds.contains(signalId))
+                "This signal has already been submitted. Duplicate order blocked."
+            else {
+                val blocked = riskManager.reserveOpen(dayKey())
+                if (blocked != null) blocked
+                else {
+                    if (signalId != null) {
+                        claimedSignalIds.add(signalId)
+                        while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
+                    }
+                    null
+                }
+            }
         }
+        if (reservationError != null) return reservationError
+        _riskState.value = riskManager.state
         val demo = client.isDemo
         val sentAt = System.currentTimeMillis()
-        val id = client.openOrder(asset, amount, direction, expirySec)
-            ?: return "Order submission failed. This signal remains consumed to prevent duplicate submissions."
+        val id = client.openOrder(asset, amount, direction, expirySec) ?: run {
+            riskManager.onRejected()
+            _riskState.value = riskManager.state
+            return "Order submission failed. Risk reservation released; check the connection before retrying."
+        }
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt)
         _trades.update { (listOf(rec) + it).take(500) }
-        riskManager.onOpened(); _riskState.value = riskManager.state
         if (signalId != null) updateSignalAudit(signalId) {
             it.copy(expiryAtMs = sentAt + expirySec * 1000L, brokerResult = TradeStatus.PENDING, tradeRequestId = id)
         }
