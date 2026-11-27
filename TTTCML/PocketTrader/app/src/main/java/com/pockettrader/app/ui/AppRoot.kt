@@ -747,6 +747,7 @@ fun AnalyticsScreen(engine: TradingEngine) {
     val trades by engine.trades.collectAsStateWithLifecycle()
     val asset by engine.selectedAsset.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
+    val strategy by engine.strategy.collectAsStateWithLifecycle()
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(1000); nowMs = System.currentTimeMillis() } }
     val openTrades = trades.filter { it.isDemo == (account == AccountType.DEMO) && it.status in setOf(TradeStatus.PENDING, TradeStatus.OPEN) }
@@ -766,6 +767,25 @@ fun AnalyticsScreen(engine: TradingEngine) {
             MetricCard("Win rate", if (closed.isEmpty()) "—" else "${"%.1f".format(wins * 100.0 / closed.size)}%", Modifier.weight(1f))
             MetricCard("Net P/L", "%+.2f".format(net), Modifier.weight(1f))
         }
+
+        val byAsset = closed.groupBy { it.asset }.mapValues { (_, rows) ->
+            val assetWins = rows.count { it.status == TradeStatus.WIN }
+            Triple(rows.size, assetWins, rows.sumOf { it.netProfit ?: 0.0 })
+        }.toList().sortedByDescending { it.second.third }
+        if (byAsset.isNotEmpty()) {
+            Text("Performance by asset", fontWeight = FontWeight.Bold)
+            byAsset.take(8).forEach { (symbol, stats) ->
+                val winRate = stats.second * 100.0 / stats.first
+                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(symbol, fontWeight = FontWeight.SemiBold)
+                        Text("${stats.first} closed · ${"%.1f".format(winRate)}% wins", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("%+.2f".format(stats.third), fontWeight = FontWeight.Bold,
+                        color = if (stats.third >= 0.0) Green else Red)
+                }
+            }
+        }
         Text("Live price · $asset", fontWeight = FontWeight.Bold)
         if (priceHistory.size > 1) {
             Canvas(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFF101D30), RoundedCornerShape(14.dp)).padding(10.dp)) {
@@ -782,27 +802,7 @@ fun AnalyticsScreen(engine: TradingEngine) {
             }
             Text("Last ${priceHistory.size} received ticks · chart is a local price trace, not candlesticks.", fontSize = 11.sp, color = Color.Gray)
         } else Text("Waiting for enough live ticks to draw the price trace.", fontSize = 12.sp, color = Color.Gray)
-        Text("Candlestick history", fontWeight = FontWeight.Bold)
-        if (candles.size >= 2) {
-            val view = candles.takeLast(60)
-            Canvas(Modifier.fillMaxWidth().height(170.dp).background(Color(0xFF101D30), RoundedCornerShape(14.dp)).padding(8.dp)) {
-                val low = view.minOf { it.low }; val high = view.maxOf { it.high }
-                val span = (high - low).takeIf { it > 0.0 } ?: 1.0
-                val step = size.width / view.size
-                val bodyWidth = (step * 0.55f).coerceAtLeast(2f)
-                view.forEachIndexed { index, candle ->
-                    val x = step * (index + 0.5f)
-                    fun y(v: Double) = size.height - ((v - low) / span * size.height).toFloat()
-                    val up = candle.close >= candle.open
-                    val tint = if (up) Color(0xFF35D0A2) else Color(0xFFE45C72)
-                    drawLine(tint, androidx.compose.ui.geometry.Offset(x, y(candle.high)), androidx.compose.ui.geometry.Offset(x, y(candle.low)), strokeWidth = 1.5f)
-                    val top = minOf(y(candle.open), y(candle.close))
-                    val bodyHeight = maxOf(2f, kotlin.math.abs(y(candle.open) - y(candle.close)))
-                    drawRect(tint, androidx.compose.ui.geometry.Offset(x - bodyWidth / 2f, top), androidx.compose.ui.geometry.Size(bodyWidth, bodyHeight))
-                }
-            }
-            Text("Last ${view.size} closed candles · OHLC from Pocket Option history.", fontSize = 11.sp, color = Color.Gray)
-        } else Text("Candlestick chart appears when historical OHLC candles load.", fontSize = 12.sp, color = Color.Gray)
+            MarketStructurePanel(candles = candles, asset = asset, timeframeSec = strategy.timeframeSec)
         Text("Open trades · local expiry estimate", fontWeight = FontWeight.Bold)
         if (openTrades.isEmpty()) Text("No open trades on this account.", fontSize = 12.sp, color = Color.Gray)
         openTrades.forEach { trade ->
