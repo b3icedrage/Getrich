@@ -34,7 +34,7 @@ import java.util.Date
 import java.util.Locale
 
 enum class AccountType { DEMO, REAL }
-enum class TradeSource { MANUAL, AUTO }
+enum class TradeSource { MANUAL, AUTO, TT }
 enum class TradeStatus { PENDING, OPEN, WIN, LOSS, DRAW, FAILED, UNKNOWN }
 
 data class TradeRecord(
@@ -504,6 +504,24 @@ class TradingEngine(context: Context) {
         return result
     }
 
+    /** A tap on an eligible TT card submits one order for that signal's own pair. */
+    fun placeTtSignalTrade(signal: Signal, amount: Double): String? {
+        if (connState.value != ConnState.CONNECTED) return "Connect to Pocket Option first."
+        if (client.isDemo != (_account.value == AccountType.DEMO)) return "Session/account mismatch. Reconnect to the selected account."
+        if (signal.confluenceScore < _minConfluence.value) return "This TT signal is below your selected threshold and is watch-only."
+        if (_signals.value.none { it.id == signal.id }) return "This signal did not pass the trade filters or is no longer eligible."
+        val quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
+        if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS)
+            return "The \${signal.asset} quote is stale. Wait for a fresh broker quote."
+        if (riskManager.isLate(signal.entryAtSec, client.serverNowSec()))
+            return "This signal is too old to enter safely. Wait for a new TT signal."
+        val payout = _assets.value.firstOrNull { it.symbol == signal.asset }?.payout
+        if (payout != null && payout < _strategy.value.minPayout)
+            return "\${signal.asset} payout is below your configured minimum."
+        riskManager.blockReason(dayKey())?.let { return "Risk limit blocked this trade: $it" }
+        return place(signal.asset, amount, signal.direction, signal.expirySec, TradeSource.TT, signal.id)
+    }
+
     /** Uses the existing authenticated order route for the generated signal. */
     fun placeSignalTrade(signal: Signal, amount: Double): String? {
         if (signal.asset != _asset.value) return "Selected pair changed. Generate a new signal for the current pair."
@@ -609,14 +627,14 @@ class TradingEngine(context: Context) {
         if (amount <= 0) return "Amount must be above 0"
         if (connState.value != ConnState.CONNECTED) return "Not connected"
         val now = System.currentTimeMillis()
-        val tickAt = _lastTickAtMs.value
-        if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS) return "Live quote is stale. Wait for a fresh Pocket Option price before ordering."
+        val tickAt = synchronized(lock) { marketTickAtMs[asset] ?: if (asset == _asset.value) _lastTickAtMs.value else 0L }
+        if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS) return "Live quote for $asset is stale. Wait for a fresh Pocket Option price before ordering."
         val demo = client.isDemo
         if (demo != (_account.value == AccountType.DEMO)) return "Session/account mismatch, reconnect"
         val id = client.openOrder(asset, amount, direction, expirySec) ?: return "Could not send order"
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, System.currentTimeMillis())
         _trades.update { (listOf(rec) + it).take(500) }
-        if (source == TradeSource.AUTO) { riskManager.onOpened(); _riskState.value = riskManager.state }
+        if (source != TradeSource.MANUAL) { riskManager.onOpened(); _riskState.value = riskManager.state }
         log("Order sent: ${direction.label} $asset ${"%.2f".format(amount)} ${expirySec}s ${if (demo) "DEMO" else "REAL"} [$source]")
         return null
     }
@@ -644,7 +662,7 @@ class TradingEngine(context: Context) {
             it.copy(status = TradeStatus.FAILED, note = error)
         }
         log("Order rejected: $error")
-        if (r?.source == TradeSource.AUTO) {
+        if (r?.source != null && r.source != TradeSource.MANUAL) {
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onRejected()
             if (r.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
@@ -660,7 +678,7 @@ class TradingEngine(context: Context) {
         log("Result ${r.asset}: $status ${"%+.2f".format(net)}")
         Notifier.result(app, r)
         client.refreshBalance()
-        if (r.source == TradeSource.AUTO) {
+        if (r.source != TradeSource.MANUAL) {
             val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onClosed(net, dayKey())
@@ -678,7 +696,7 @@ class TradingEngine(context: Context) {
         for (t in stale) {
             updateTrade({ it.requestId == t.requestId }) { it.copy(status = TradeStatus.UNKNOWN, note = "No result received; check Pocket Option history") }
             log("No result for ${t.asset} trade; marked UNKNOWN")
-            if (t.source == TradeSource.AUTO) {
+            if (t.source != TradeSource.MANUAL) {
                 val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
                 manager.onClosed(-t.amount, dayKey())
                 if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
