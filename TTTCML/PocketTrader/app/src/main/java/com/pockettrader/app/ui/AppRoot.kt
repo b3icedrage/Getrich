@@ -1,0 +1,394 @@
+package com.pockettrader.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pockettrader.app.protocol.ConnState
+import com.pockettrader.app.protocol.Direction
+import com.pockettrader.app.protocol.SsidParser
+import com.pockettrader.app.signals.StrategyType
+import com.pockettrader.app.signals.TrendTrigger
+import com.pockettrader.app.trading.AccountType
+import com.pockettrader.app.trading.TradeStatus
+import com.pockettrader.app.trading.TradingEngine
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+private val Green = Color(0xFF2E7D32)
+private val Red = Color(0xFFC62828)
+private val hms = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
+enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AppRoot(engine: TradingEngine) {
+    var tab by rememberSaveable { mutableStateOf(Tab.ACCOUNT.takeIf { !engine.sessions.value.first && !engine.sessions.value.second } ?: Tab.TRADE) }
+    var showWebLogin by remember { mutableStateOf(false) }
+    var confirmReal by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val conn by engine.connState.collectAsStateWithLifecycle()
+    val account by engine.account.collectAsStateWithLifecycle()
+    val balance by engine.balance.collectAsStateWithLifecycle()
+    val auto by engine.autoEnabled.collectAsStateWithLifecycle()
+
+    if (showWebLogin) {
+        LoginWebViewScreen(onCaptured = { engine.saveSession(it) }, onClose = { showWebLogin = false })
+        return
+    }
+
+    if (confirmReal) {
+        AlertDialog(
+            onDismissRequest = { confirmReal = false },
+            title = { Text("Switch to REAL money?") },
+            text = { Text("Trades on the Real account use your real balance and can lose it. Manual and autotrader orders will be real. Continue?") },
+            confirmButton = { TextButton(onClick = { confirmReal = false; message = engine.switchAccount(AccountType.REAL) }) { Text("Yes, use Real", color = Red) } },
+            dismissButton = { TextButton(onClick = { confirmReal = false }) { Text("Stay on Demo") } },
+        )
+    }
+    message?.let { m -> AlertDialog(onDismissRequest = { message = null }, confirmButton = { TextButton(onClick = { message = null }) { Text("OK") } }, text = { Text(m) }) }
+
+    Scaffold(
+        topBar = {
+            Column(Modifier.background(if (account == AccountType.REAL) Color(0xFF4A1010) else Color(0xFF10324A)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("PocketTrader", fontWeight = FontWeight.Bold)
+                        Text("${account.name} · ${connLabel(conn)} · Balance ${balance?.let { "%.2f".format(it) } ?: "-"}", fontSize = 13.sp)
+                    }
+                    SingleChoiceSegmentedButtonRow {
+                        SegmentedButton(selected = account == AccountType.DEMO, onClick = { message = engine.switchAccount(AccountType.DEMO) },
+                            shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Demo") }
+                        SegmentedButton(selected = account == AccountType.REAL, onClick = { if (account != AccountType.REAL) confirmReal = true },
+                            shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Real") }
+                    }
+                }
+                if (auto) {
+                    Button(onClick = { engine.emergencyStop() }, colors = ButtonDefaults.buttonColors(containerColor = Red),
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(52.dp)) {
+                        Text("STOP AUTOTRADER", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            NavigationBar {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) }, icon = {
+                        Icon(when (t) {
+                            Tab.TRADE -> Icons.Default.ShowChart; Tab.SIGNALS -> Icons.Default.Notifications
+                            Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
+                        }, null)
+                    })
+                }
+            }
+        },
+    ) { pad ->
+        Box(Modifier.padding(pad).fillMaxSize()) {
+            when (tab) {
+                Tab.TRADE -> TradeScreen(engine) { message = it }
+                Tab.SIGNALS -> SignalsScreen(engine)
+                Tab.AUTO -> AutoScreen(engine) { message = it }
+                Tab.LOG -> LogScreen(engine)
+                Tab.ACCOUNT -> AccountScreen(engine, onWebLogin = { showWebLogin = true }) { message = it }
+            }
+        }
+    }
+}
+
+private fun connLabel(c: ConnState) = when (c) {
+    ConnState.DISCONNECTED -> "offline"; ConnState.CONNECTING -> "connecting…"; ConnState.AUTHENTICATING -> "signing in…"
+    ConnState.CONNECTED -> "live"; ConnState.AUTH_FAILED -> "session rejected"
+}
+
+// ---------------------------------------------------------------- Trade
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
+    val assets by engine.assets.collectAsStateWithLifecycle()
+    val asset by engine.selectedAsset.collectAsStateWithLifecycle()
+    val price by engine.price.collectAsStateWithLifecycle()
+    val conn by engine.connState.collectAsStateWithLifecycle()
+    val account by engine.account.collectAsStateWithLifecycle()
+    var amount by rememberSaveable { mutableStateOf("1") }
+    var expiry by rememberSaveable { mutableStateOf(60) }
+    var filter by rememberSaveable { mutableStateOf("") }
+    var pending by remember { mutableStateOf<Direction?>(null) }
+    val current = assets.firstOrNull { it.symbol == asset }
+
+    pending?.let { dir ->
+        AlertDialog(onDismissRequest = { pending = null },
+            title = { Text("Confirm REAL trade") },
+            text = { Text("${dir.label} $asset, amount $amount, expiry ${expiry}s on your REAL account.") },
+            confirmButton = { TextButton(onClick = { pending = null; engine.placeManual(dir, amount.toDoubleOrNull() ?: 0.0, expiry)?.let(onMessage) }) { Text("Place real trade", color = Red) } },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } })
+    }
+
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        if (conn != ConnState.CONNECTED) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Not connected", Modifier.weight(1f))
+                Button(onClick = { engine.connect()?.let(onMessage) }) { Text("Connect") }
+            }
+        }
+        Text(current?.name ?: asset, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Price ${price?.let { "%.5f".format(it) } ?: "waiting…"}   Payout ${current?.payout?.let { "$it%" } ?: "-"}", fontSize = 16.sp)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Amount") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.width(120.dp), singleLine = true)
+            ExpiryPicker(expiry) { expiry = it }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf(Direction.CALL to Green, Direction.PUT to Red).forEach { (d, col) ->
+                Button(onClick = {
+                    if (account == AccountType.REAL) pending = d
+                    else engine.placeManual(d, amount.toDoubleOrNull() ?: 0.0, expiry)?.let(onMessage)
+                }, enabled = conn == ConnState.CONNECTED, colors = ButtonDefaults.buttonColors(containerColor = col),
+                    modifier = Modifier.weight(1f).height(56.dp)) { Text(if (d == Direction.CALL) "▲ HIGHER" else "▼ LOWER", fontSize = 18.sp) }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(filter, { filter = it }, label = { Text("Search assets") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        LazyColumn(Modifier.fillMaxSize()) {
+            items(assets.filter { filter.isBlank() || it.name.contains(filter, true) || it.symbol.contains(filter, true) }, key = { it.symbol }) { a ->
+                Row(Modifier.fillMaxWidth().clickable { engine.selectAsset(a.symbol) }
+                    .background(if (a.symbol == asset) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                    .padding(vertical = 8.dp, horizontal = 4.dp)) {
+                    Text(a.name + if (a.isOtc) " (OTC)" else "", Modifier.weight(1f), color = if (a.isActive) Color.Unspecified else Color.Gray)
+                    Text(if (a.isActive) "${a.payout}%" else "closed", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+val EXPIRIES = listOf(5, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600)
+fun expiryLabel(s: Int) = if (s < 60) "${s}s" else if (s < 3600) "${s / 60}m" else "${s / 3600}h"
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ExpiryPicker(value: Int, options: List<Int> = EXPIRIES, label: String = "Expiry", onChange: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(open, { open = it }) {
+        OutlinedTextField(expiryLabel(value), {}, readOnly = true, label = { Text(label) },
+            modifier = Modifier.menuAnchor().width(130.dp), trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) })
+        ExposedDropdownMenu(open, { open = false }) {
+            options.forEach { e -> DropdownMenuItem(text = { Text(expiryLabel(e)) }, onClick = { onChange(e); open = false }) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Signals
+@Composable
+fun SignalsScreen(engine: TradingEngine) {
+    val signals by engine.signals.collectAsStateWithLifecycle()
+    val cfg by engine.strategy.collectAsStateWithLifecycle()
+    val asset by engine.selectedAsset.collectAsStateWithLifecycle()
+    val counts by engine.candleCount.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        Text("Strategy-based signals. Not guaranteed. Past results do not predict future results.", color = Color(0xFFFFB300), fontSize = 13.sp)
+        Text("${cfg.type.label} on $asset · ${expiryLabel(cfg.timeframeSec)} candles · HTF ${expiryLabel(cfg.higherTimeframeSec)} · expiry ${expiryLabel(cfg.expirySec)}", fontSize = 13.sp)
+        Text("Candles loaded: ${counts.first} signal-TF, ${counts.second} higher-TF", fontSize = 12.sp, color = Color.Gray)
+        Spacer(Modifier.height(8.dp))
+        StrategyEditor(engine)
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        if (signals.isEmpty()) Text("No signals yet. Signals are checked at every candle close of the selected asset.")
+        LazyColumn {
+            items(signals, key = { it.id }) { s ->
+                Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text("${s.direction.label.uppercase()} ${s.asset}", fontWeight = FontWeight.Bold, color = if (s.direction == Direction.CALL) Green else Red)
+                        Text("Enter ${hms.format(Date(s.entryAtSec * 1000))} · expiry ${expiryLabel(s.expirySec)} · emitted ${hms.format(Date(s.emittedAtMs))}", fontSize = 13.sp)
+                        Text("${s.strategy.label}: ${s.reason}", fontSize = 12.sp, color = Color.Gray)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StrategyEditor(engine: TradingEngine) {
+    val cfg by engine.strategy.collectAsStateWithLifecycle()
+    var expanded by remember { mutableStateOf(false) }
+    var open by remember { mutableStateOf(false) }
+    Column {
+        ExposedDropdownMenuBox(open, { open = it }) {
+            OutlinedTextField(cfg.type.label, {}, readOnly = true, label = { Text("Strategy") },
+                modifier = Modifier.menuAnchor().fillMaxWidth(), trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(open) })
+            ExposedDropdownMenu(open, { open = false }) {
+                StrategyType.entries.forEach { t -> DropdownMenuItem(text = { Text(t.label) }, onClick = { engine.updateStrategy(cfg.copy(type = t)); open = false }) }
+            }
+        }
+        Text(cfg.type.description, fontSize = 12.sp, color = Color.Gray)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ExpiryPicker(cfg.timeframeSec, listOf(60, 300, 900), "Candles") { engine.updateStrategy(cfg.copy(timeframeSec = it)) }
+            ExpiryPicker(cfg.higherTimeframeSec, listOf(300, 900, 1800, 3600, 14400), "Trend TF") { engine.updateStrategy(cfg.copy(higherTimeframeSec = it)) }
+        }
+        ExpiryPicker(cfg.expirySec, label = "Trade expiry") { engine.updateStrategy(cfg.copy(expirySec = it)) }
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide parameters" else "More parameters") }
+        if (expanded) {
+            NumField("Trend EMA period (higher TF)", cfg.htfEmaPeriod.toDouble()) { engine.updateStrategy(cfg.copy(htfEmaPeriod = it.toInt().coerceAtLeast(2))) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Trend trigger: ")
+                TrendTrigger.entries.forEach { t -> FilterChip(cfg.trendTrigger == t, { engine.updateStrategy(cfg.copy(trendTrigger = t)) }, { Text(t.name) }, Modifier.padding(end = 6.dp)) }
+            }
+            NumField("RSI oversold", cfg.rsiOversold) { engine.updateStrategy(cfg.copy(rsiOversold = it)) }
+            NumField("RSI overbought", cfg.rsiOverbought) { engine.updateStrategy(cfg.copy(rsiOverbought = it)) }
+            NumField("ADX trend level", cfg.adxTrend) { engine.updateStrategy(cfg.copy(adxTrend = it)) }
+            NumField("ADX range level", cfg.adxRange) { engine.updateStrategy(cfg.copy(adxRange = it)) }
+            NumField("Breakout tick-volume multiple", cfg.volumeMult) { engine.updateStrategy(cfg.copy(volumeMult = it)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(cfg.requireVolume, { engine.updateStrategy(cfg.copy(requireVolume = it)) })
+                Text("  Require tick-volume surge for breakouts (tick count is a volume proxy)", fontSize = 12.sp)
+            }
+            NumField("Minimum payout %", cfg.minPayout.toDouble()) { engine.updateStrategy(cfg.copy(minPayout = it.toInt())) }
+        }
+    }
+}
+
+@Composable
+fun NumField(label: String, value: Double, onChange: (Double) -> Unit) {
+    var text by remember(value) { mutableStateOf(if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()) }
+    OutlinedTextField(text, { t -> text = t; t.toDoubleOrNull()?.let(onChange) }, label = { Text(label) }, singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp))
+}
+
+// ---------------------------------------------------------------- Auto
+@Composable
+fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
+    val auto by engine.autoEnabled.collectAsStateWithLifecycle()
+    val status by engine.autoStatus.collectAsStateWithLifecycle()
+    val risk by engine.risk.collectAsStateWithLifecycle()
+    val rs by engine.riskState.collectAsStateWithLifecycle()
+    val account by engine.account.collectAsStateWithLifecycle()
+    val conn by engine.connState.collectAsStateWithLifecycle()
+    val cfg by engine.strategy.collectAsStateWithLifecycle()
+    var confirmRealAuto by remember { mutableStateOf(false) }
+    if (confirmRealAuto) {
+        AlertDialog(onDismissRequest = { confirmRealAuto = false },
+            title = { Text("Autotrade with REAL money?") },
+            text = { Text("The autotrader will place real trades of ${"%.2f".format(risk.stake)} each without asking, until a limit is hit or you press STOP. Signals are not guaranteed.") },
+            confirmButton = { TextButton(onClick = { confirmRealAuto = false; engine.setAuto(true) }) { Text("Start on Real", color = Red) } },
+            dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } })
+    }
+    Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
+        Text("Autotrader executes signals from: ${cfg.type.label}", fontWeight = FontWeight.Bold)
+        Text("Status: $status")
+        Text("Session trades ${rs.sessionTrades}/${risk.maxTradesPerSession} · Today P/L ${"%+.2f".format(rs.dailyPnl)} · Loss streak ${rs.consecutiveLosses} · Open ${rs.openTrades}", fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+        if (!auto) {
+            Button(onClick = {
+                when {
+                    conn != ConnState.CONNECTED -> onMessage("Connect first (Trade tab).")
+                    account == AccountType.REAL -> confirmRealAuto = true
+                    else -> engine.setAuto(true)
+                }
+            }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Green)) {
+                Text("Start autotrader on ${account.name}")
+            }
+        } else {
+            Button(onClick = { engine.emergencyStop() }, modifier = Modifier.fillMaxWidth().height(72.dp), colors = ButtonDefaults.buttonColors(containerColor = Red)) {
+                Text("STOP", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        OutlinedButton(onClick = { engine.resetSession() }, modifier = Modifier.padding(top = 6.dp)) { Text("Reset session counters") }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text("Risk limits", fontWeight = FontWeight.Bold)
+        NumField("Fixed stake per trade", risk.stake) { engine.updateRisk(risk.copy(stake = it)) }
+        NumField("Max trades per session", risk.maxTradesPerSession.toDouble()) { engine.updateRisk(risk.copy(maxTradesPerSession = it.toInt())) }
+        NumField("Daily stop-loss (0 = off)", risk.dailyStopLoss) { engine.updateRisk(risk.copy(dailyStopLoss = it)) }
+        NumField("Daily take-profit (0 = off)", risk.dailyTakeProfit) { engine.updateRisk(risk.copy(dailyTakeProfit = it)) }
+        NumField("Max consecutive losses (0 = off)", risk.maxConsecutiveLosses.toDouble()) { engine.updateRisk(risk.copy(maxConsecutiveLosses = it.toInt())) }
+        NumField("Skip signals later than (seconds)", risk.maxSignalDelaySec.toDouble()) { engine.updateRisk(risk.copy(maxSignalDelaySec = it.toInt())) }
+        Text("The autotrader trades one position at a time on the selected asset, skips assets under the minimum payout, and stops itself when a limit is hit. Open binary options cannot be closed early; STOP only prevents new trades.", fontSize = 12.sp, color = Color.Gray)
+    }
+}
+
+// ---------------------------------------------------------------- Log
+@Composable
+fun LogScreen(engine: TradingEngine) {
+    val trades by engine.trades.collectAsStateWithLifecycle()
+    val logs by engine.logs.collectAsStateWithLifecycle()
+    var showEvents by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        val closed = trades.filter { it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
+        val wins = closed.count { it.status == TradeStatus.WIN }
+        Text("Trades ${trades.size} · Closed ${closed.size} · Wins $wins · Win rate ${if (closed.isEmpty()) "-" else "${wins * 100 / closed.size}%"} · Net ${"%+.2f".format(closed.sumOf { it.netProfit ?: 0.0 })}")
+        Row { FilterChip(!showEvents, { showEvents = false }, { Text("Trades") }); Spacer(Modifier.width(8.dp)); FilterChip(showEvents, { showEvents = true }, { Text("Events") }) }
+        LazyColumn {
+            if (!showEvents) items(trades, key = { it.requestId }) { t ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${t.direction.label} ${t.asset} ${"%.2f".format(t.amount)} · ${expiryLabel(t.expirySec)} · ${if (t.isDemo) "demo" else "REAL"} · ${t.source}", fontSize = 13.sp)
+                        Text(hms.format(Date(t.placedAtMs)) + (t.note?.let { " · $it" } ?: ""), fontSize = 11.sp, color = Color.Gray)
+                    }
+                    Text("${t.status}${t.netProfit?.let { " %+.2f".format(it) } ?: ""}", fontWeight = FontWeight.Bold,
+                        color = when (t.status) { TradeStatus.WIN -> Green; TradeStatus.LOSS -> Red; else -> Color.Unspecified })
+                }
+            } else items(logs) { l -> Text("${hms.format(Date(l.timeMs))}  ${l.text}", fontSize = 12.sp) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Account
+@Composable
+fun AccountScreen(engine: TradingEngine, onWebLogin: () -> Unit, onMessage: (String) -> Unit) {
+    val sessions by engine.sessions.collectAsStateWithLifecycle()
+    val conn by engine.connState.collectAsStateWithLifecycle()
+    var paste by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
+        Text("Pocket Option sessions", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("Demo session: ${if (sessions.first) "saved ✓" else "none"}    Real session: ${if (sessions.second) "saved ✓" else "none"}")
+        Text("Stored encrypted on this phone only. Your password is never stored by this app.", fontSize = 12.sp, color = Color.Gray)
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = onWebLogin, modifier = Modifier.fillMaxWidth()) { Text("Sign in with Pocket Option (recommended)") }
+        Text("Signs in on pocketoption.com inside the app and captures the session the website itself uses. After signing in, tap 'Open Demo' and 'Open Real' so both sessions are captured.", fontSize = 12.sp)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { engine.connect()?.let(onMessage) }, enabled = conn == ConnState.DISCONNECTED || conn == ConnState.AUTH_FAILED) { Text("Connect") }
+            OutlinedButton(onClick = { engine.disconnect() }) { Text("Disconnect") }
+            OutlinedButton(onClick = { engine.clearSessions() }) { Text("Forget sessions") }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+        Text("Or paste a session (fallback)", fontWeight = FontWeight.Bold)
+        Text(PASTE_HELP, fontSize = 12.sp)
+        OutlinedTextField(paste, { paste = it }, label = { Text("42[\"auth\",{\"session\":...}]") }, modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp))
+        Button(onClick = {
+            try {
+                val s = SsidParser.parse(paste)
+                engine.saveSession(s); paste = ""
+                onMessage("Saved ${s.describe()}." + if (!s.isDemo) " Real sessions are tied to the browser's IP and user agent; it may be rejected if your phone's IP differs." else "")
+            } catch (e: Exception) { onMessage(e.message ?: "Could not read that session") }
+        }) { Text("Save pasted session") }
+    }
+}
+
+private const val PASTE_HELP = """1. On a computer, open pocketoption.com and sign in. Open the Demo (or Real) trading page.
+2. Press F12 > Network tab > filter "WS" and reload the page (F5).
+3. Click the socket.io/?EIO=4… connection > Messages.
+4. Find the sent message starting with 42["auth",{"session":… that has "isDemo" and "platform" (not the one with "sessionToken").
+5. Right-click > Copy message, and paste it here. Repeat on the other account to save both.
+Real sessions are bound to that browser's IP and user agent, so the in-app sign-in is more reliable."""
