@@ -24,7 +24,7 @@ enum class TrendTrigger { MACD, SUPERTREND }
 
 data class StrategyConfig(
     val type: StrategyType = StrategyType.AUTO_REGIME,
-    /** Lower (signal) timeframe in seconds: 60, 300 or 900. */
+    /** Lower (signal) timeframe in seconds: 15, 30, 60, 300 or 900. */
     val timeframeSec: Int = 60,
     /** Higher timeframe used by the trend filter, seconds (e.g. 900, 3600). */
     val higherTimeframeSec: Int = 900,
