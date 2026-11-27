@@ -18,6 +18,7 @@ enum class StrategyType(val label: String, val description: String) {
     BREAKOUT("Volatility breakout + volume", "Close outside the prior Donchian range with tick-volume > 1.5x its 20-candle average."),
     LIQUIDITY_SWEEP("Liquidity sweep reversal", "Wick beyond the recent swing high/low, then close back inside = trade the reversal."),
     EMA_RSI("EMA cross + RSI (simple)", "Fast EMA crosses slow EMA, confirmed by RSI on the same side of 50."),
+    ADAPTIVE_AI("Adaptive AI (HMM + KDE)", "Three-state HMM volatility regime gate; KDE residual tails for mean reversion; momentum in normal regimes; chaotic regimes wait."),
 }
 
 enum class TrendTrigger { MACD, SUPERTREND }
@@ -45,6 +46,8 @@ data class StrategyConfig(
     val emaFast: Int = 9, val emaSlow: Int = 21,
     /** Ignore assets whose payout is below this. */
     val minPayout: Int = 80,
+    val adaptiveMinRegimeConfidence: Double = 0.55,
+    val adaptiveMaxTailProbability: Double = 0.05,
 )
 
 data class Decision(val direction: Direction, val strategy: StrategyType, val reason: String)
@@ -58,6 +61,43 @@ object Strategies {
         StrategyType.BREAKOUT -> breakout(cfg, ltf)
         StrategyType.LIQUIDITY_SWEEP -> liquiditySweep(cfg, ltf)
         StrategyType.EMA_RSI -> emaRsi(cfg, ltf)
+        StrategyType.ADAPTIVE_AI -> adaptiveAi(cfg, ltf, htf)
+    }
+
+    /**
+     * Adaptive single-asset mode. HMM labels volatility regimes (not pair coupling):
+     * stable -> KDE tail mean reversion; normal -> MTF momentum; chaotic/uncertain -> WAIT.
+     */
+    fun adaptiveAi(cfg: StrategyConfig, ltf: List<Candle>, htf: List<Candle>): Decision? {
+        if (ltf.size < 45) return null
+        val regime = HiddenMarkovRegimeModel.classify(ltf.map { it.close })
+        if (regime.confidence < cfg.adaptiveMinRegimeConfidence) return null
+        return when (regime.regime) {
+            MarketRegime.STABLE -> {
+                if (ltf.size < 30) return null
+                val closes = ltf.map { it.close }
+                val ema = Indicators.ema(closes, minOf(20, closes.size - 1))
+                val residuals = closes.indices.mapNotNull { i ->
+                    if (ema[i].isFinite()) closes[i] - ema[i] else null
+                }
+                if (residuals.size < 26) return null
+                val tail = KernelDensityTailEstimator.estimate(residuals.dropLast(1).takeLast(80), residuals.last()) ?: return null
+                if (tail.extremeTailProbability > cfg.adaptiveMaxTailProbability) return null
+                val rsi = Indicators.rsi(closes, cfg.rsiPeriod).last()
+                when {
+                    tail.side == "LOWER" && rsi.isFinite() && rsi < 45.0 ->
+                        Decision(Direction.CALL, StrategyType.ADAPTIVE_AI, "HMM stable regime (%.0f%%); KDE lower-tail probability %.3f; RSI %.1f".format(regime.confidence * 100, tail.lowerTailProbability, rsi))
+                    tail.side == "UPPER" && rsi.isFinite() && rsi > 55.0 ->
+                        Decision(Direction.PUT, StrategyType.ADAPTIVE_AI, "HMM stable regime (%.0f%%); KDE upper-tail probability %.3f; RSI %.1f".format(regime.confidence * 100, tail.upperTailProbability, rsi))
+                    else -> null
+                }
+            }
+            MarketRegime.NORMAL -> trendMtf(cfg, ltf, htf)?.copy(
+                strategy = StrategyType.ADAPTIVE_AI,
+                reason = "HMM normal regime (%.0f%%); momentum confirmation: %s".format(regime.confidence * 100, trendMtf(cfg, ltf, htf)?.reason ?: "none")
+            )
+            MarketRegime.CHAOTIC, MarketRegime.INSUFFICIENT_DATA -> null
+        }
     }
 
     /** Last ADX value on the signal timeframe, or NaN if not enough data. */
