@@ -88,7 +88,7 @@ class SecureStore(context: Context) {
         return d.copy(
             type = runCatching { StrategyType.valueOf(plain.getString("st_type", d.type.name)!!) }.getOrDefault(d.type),
             timeframeSec = plain.getInt("st_tf", d.timeframeSec),
-            higherTimeframeSec = plain.getInt("st_htf", d.higherTimeframeSec),
+            higherTimeframeSec = plain.getInt("st_htf", d.higherTimeframeSec).coerceIn(3600, 14400),
             expirySec = plain.getInt("st_exp", d.expirySec),
             htfEmaPeriod = plain.getInt("st_htf_ema", d.htfEmaPeriod),
             trendTrigger = runCatching { TrendTrigger.valueOf(plain.getString("st_trig", d.trendTrigger.name)!!) }.getOrDefault(d.trendTrigger),
