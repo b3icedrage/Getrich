@@ -57,7 +57,7 @@ private val Green = Color(0xFF2E7D32)
 private val Red = Color(0xFFC62828)
 private val hms = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
-enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
+enum class Tab(val label: String) { TRADE("Trade"), SIGNALS("Signals"), CHAT("AI Chat"), AUTO("Auto"), LOG("Log"), ACCOUNT("Account") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,7 +124,7 @@ fun AppRoot(engine: TradingEngine) {
                     NavigationBarItem(selected = tab == t, onClick = { tab = t }, label = { Text(t.label) }, icon = {
                         Icon(when (t) {
                             Tab.TRADE -> Icons.Default.ShowChart; Tab.SIGNALS -> Icons.Default.Notifications
-                            Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
+                            Tab.CHAT -> Icons.Default.Chat; Tab.AUTO -> Icons.Default.SmartToy; Tab.LOG -> Icons.Default.List; Tab.ACCOUNT -> Icons.Default.AccountCircle
                         }, null)
                     })
                 }
@@ -140,6 +140,7 @@ fun AppRoot(engine: TradingEngine) {
             when (activeTab) {
                 Tab.TRADE -> TradeScreen(engine) { message = it }
                 Tab.SIGNALS -> SignalsScreen(engine)
+                Tab.CHAT -> ChatScreen(engine) { message = it }
                 Tab.AUTO -> AutoScreen(engine) { message = it }
                 Tab.LOG -> LogScreen(engine)
                 Tab.ACCOUNT -> AccountScreen(engine, onWebLogin = { showWebLogin = true }) { message = it }
@@ -479,9 +480,6 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val account by engine.account.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     val cfg by engine.strategy.collectAsStateWithLifecycle()
-    val aiConfigured by engine.aiConfigured.collectAsStateWithLifecycle()
-    val aiStatus by engine.aiStatus.collectAsStateWithLifecycle()
-    var nvidiaKey by rememberSaveable { mutableStateOf("") }
     var confirmRealAuto by remember { mutableStateOf(false) }
     if (confirmRealAuto) {
         AlertDialog(onDismissRequest = { confirmRealAuto = false },
@@ -491,28 +489,9 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } })
     }
     Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
-        Text("NVIDIA AI ENGINE", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        Text("Model: nvidia/nemotron-3.5-lightning-30b-a3b", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(if (aiConfigured) aiStatus else "Add an NVIDIA API key to enable AI Auto Trade.", fontSize = 12.sp,
-            color = if (aiConfigured) Green else MaterialTheme.colorScheme.error)
-        OutlinedTextField(
-            value = nvidiaKey,
-            onValueChange = { nvidiaKey = it },
-            label = { Text("NVIDIA API key") },
-            placeholder = { Text("nvapi-…") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = {
-                val result = engine.saveNvidiaApiKey(nvidiaKey)
-                if (result == null) nvidiaKey = "" else onMessage(result)
-            }, enabled = nvidiaKey.isNotBlank()) { Text("Save API key") }
-            if (aiConfigured) OutlinedButton(onClick = { engine.clearNvidiaApiKey() }) { Text("Remove key") }
-        }
-        Text("The key is encrypted on this device. Every auto signal is sent to NVIDIA for a BUY / SELL / NO TRADE decision. API errors, low confidence and unclear setups are skipped.", fontSize = 11.sp, color = Color.Gray)
+        Text("SIGNAL-DRIVEN AUTOTRADER", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("Nemotron is available in the AI Chat tab only. It never approves, rejects, or changes signals.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Signal source: live Pocket Option price ticks and candle history while connected.", fontSize = 12.sp, color = Green)
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("Autotrader executes signals from: ${cfg.type.label}", fontWeight = FontWeight.Bold)
         Text("Status: $status")
@@ -522,8 +501,7 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             Button(onClick = {
                 when {
                     conn != ConnState.CONNECTED -> onMessage("Connect first (Trade tab).")
-                    !aiConfigured -> onMessage("Save your NVIDIA API key first to enable Nemotron AI Auto Trade.")
-                    account == AccountType.REAL -> onMessage("Nemotron AI Auto Trade is currently demo-only. Switch to Demo first.")
+                    account == AccountType.REAL -> onMessage("Automatic trading is currently demo-only. Switch to Demo first.")
                     else -> engine.setAuto(true)
                 }
             }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Green)) {
@@ -544,6 +522,60 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         NumField("Max consecutive losses (0 = off)", risk.maxConsecutiveLosses.toDouble()) { engine.updateRisk(risk.copy(maxConsecutiveLosses = it.toInt())) }
         NumField("Skip signals later than (seconds)", risk.maxSignalDelaySec.toDouble()) { engine.updateRisk(risk.copy(maxSignalDelaySec = it.toInt())) }
         Text("The autotrader trades one position at a time on the selected asset, skips assets under the minimum payout, and stops itself when a limit is hit. Open binary options cannot be closed early; STOP only prevents new trades.", fontSize = 12.sp, color = Color.Gray)
+    }
+}
+
+// ---------------------------------------------------------------- AI Chat
+@Composable
+fun ChatScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
+    val configured by engine.aiConfigured.collectAsStateWithLifecycle()
+    val status by engine.aiStatus.collectAsStateWithLifecycle()
+    val messages by engine.chatMessages.collectAsStateWithLifecycle()
+    val busy by engine.chatBusy.collectAsStateWithLifecycle()
+    var apiKey by rememberSaveable { mutableStateOf("") }
+    var prompt by rememberSaveable { mutableStateOf("") }
+
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("NEMOTRON AI CHAT", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text("nvidia/nemotron-3.5-lightning-30b-a3b · $status", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { engine.clearChat() }) { Text("Clear") }
+        }
+        if (!configured) {
+            Text("Enter your NVIDIA API key. It is stored encrypted on this phone and used only for chat.", fontSize = 12.sp)
+            OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("NVIDIA API key") },
+                placeholder = { Text("nvapi-…") }, singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                val error = engine.saveNvidiaApiKey(apiKey)
+                if (error == null) apiKey = "" else onMessage(error)
+            }, enabled = apiKey.isNotBlank()) { Text("Save API key") }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("API key saved securely", Modifier.weight(1f), fontSize = 12.sp, color = Green)
+                TextButton(onClick = { engine.clearNvidiaApiKey() }) { Text("Remove key") }
+            }
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(messages) { item ->
+                val user = item.role == "user"
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+                    Surface(color = if (user) Color(0xFF17483F) else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(16.dp), modifier = Modifier.widthIn(max = 320.dp)) {
+                        Text(item.content, Modifier.padding(12.dp), fontSize = 14.sp)
+                    }
+                }
+            }
+            if (busy) item { Text("Nemotron is thinking…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = prompt, onValueChange = { prompt = it }, modifier = Modifier.weight(1f),
+                placeholder = { Text("Ask Nemotron…") }, enabled = configured && !busy, maxLines = 4)
+            Button(onClick = { engine.sendChatMessage(prompt); prompt = "" }, enabled = configured && !busy && prompt.isNotBlank()) { Text("Send") }
+        }
+        Text("Chat only — no access to the live feed and no control over trading or signal decisions.", fontSize = 10.sp, color = Color.Gray)
     }
 }
 
