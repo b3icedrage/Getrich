@@ -336,7 +336,7 @@ class TradingEngine(context: Context) {
         val strategy = d.copy(
             type = com.pockettrader.app.signals.StrategyType.valueOf(st.optString("type", d.type.name)),
             timeframeSec = st.optInt("timeframeSec", d.timeframeSec).coerceIn(15, 900),
-            higherTimeframeSec = st.optInt("higherTimeframeSec", d.higherTimeframeSec).coerceIn(60, 3600),
+            higherTimeframeSec = st.optInt("higherTimeframeSec", d.higherTimeframeSec).coerceIn(3600, 14400),
             expirySec = st.optInt("expirySec", d.expirySec).coerceIn(5, 3600),
             htfEmaPeriod = st.optInt("htfEmaPeriod", d.htfEmaPeriod).coerceIn(2, 500),
             trendTrigger = com.pockettrader.app.signals.TrendTrigger.valueOf(st.optString("trendTrigger", d.trendTrigger.name)),
