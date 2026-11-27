@@ -319,7 +319,7 @@ class TradingEngine(context: Context) {
             .put("emaSlow", c.emaSlow).put("minPayout", c.minPayout)
             .put("adaptiveMinRegimeConfidence", c.adaptiveMinRegimeConfidence)
             .put("adaptiveMaxTailProbability", c.adaptiveMaxTailProbability)
-        val rk = JSONObject().put("stake", r.stake).put("maxTradesPerSession", r.maxTradesPerSession)
+        val rk = JSONObject().put("stake", r.stake).put("stakePercent", r.stakePercent).put("minimumStake", r.minimumStake).put("maxTradesPerSession", r.maxTradesPerSession)
             .put("dailyStopLoss", r.dailyStopLoss).put("dailyTakeProfit", r.dailyTakeProfit)
             .put("maxConsecutiveLosses", r.maxConsecutiveLosses).put("maxOpenTrades", r.maxOpenTrades)
             .put("maxSignalDelaySec", r.maxSignalDelaySec)
@@ -366,6 +366,8 @@ class TradingEngine(context: Context) {
         val rk = root.getJSONObject("risk"); val rd = _risk.value
         val risk = rd.copy(
             stake = rk.optDouble("stake", rd.stake).coerceIn(0.1, 100000.0),
+            stakePercent = rk.optDouble("stakePercent", rd.stakePercent).coerceIn(0.1, 5.0),
+            minimumStake = rk.optDouble("minimumStake", rd.minimumStake).coerceIn(0.1, 100000.0),
             maxTradesPerSession = rk.optInt("maxTradesPerSession", rd.maxTradesPerSession).coerceIn(1, 1000),
             dailyStopLoss = rk.optDouble("dailyStopLoss", rd.dailyStopLoss).coerceAtLeast(0.0),
             dailyTakeProfit = rk.optDouble("dailyTakeProfit", rd.dailyTakeProfit).coerceAtLeast(0.0),
@@ -492,6 +494,16 @@ class TradingEngine(context: Context) {
             val confluence = com.pockettrader.app.signals.IndicatorConfluence.analyze(
                 ltfCandles, htfCandles, minScore = _minConfluence.value
             )
+            val strictBlock = com.pockettrader.app.signals.SmartEntryRules.rejection(ltfCandles, htfCandles, decision.direction)
+            if (strictBlock != null) {
+                log("Manual signal blocked by smart entry rules: $strictBlock")
+                return@synchronized null
+            }
+            val selectedPayout = _assets.value.firstOrNull { it.symbol == sym }?.payout
+            if (selectedPayout == null || selectedPayout < _strategy.value.minPayout) {
+                log("Manual signal blocked: payout unavailable or below ${_strategy.value.minPayout}%")
+                return@synchronized null
+            }
             if (confluence.recommendation != decision.direction) {
                 log("Manual signal blocked: indicator confluence below ${_minConfluence.value}% or directional edge insufficient")
                 return@synchronized null
