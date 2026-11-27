@@ -101,8 +101,6 @@ class TradingEngine(context: Context) {
     val priceHistory: StateFlow<List<Pair<Long, Double>>> = _priceHistory
     private val _candleHistory = MutableStateFlow<List<Candle>>(emptyList())
     val candleHistory: StateFlow<List<Candle>> = _candleHistory
-    private var lastOrderFingerprint = ""
-    private var lastOrderAtMs = 0L
 
     init {
         scope.launch { client.events.collect { onEvent(it) } }
@@ -524,13 +522,6 @@ class TradingEngine(context: Context) {
         if (tickAt <= 0L || now - tickAt > MAX_TICK_AGE_MS) return "Live quote is stale. Wait for a fresh Pocket Option price before ordering."
         val demo = client.isDemo
         if (demo != (_account.value == AccountType.DEMO)) return "Session/account mismatch, reconnect"
-        val fingerprint = "$asset|$amount|$direction|$expirySec|$demo|$source"
-        synchronized(lock) {
-            if (fingerprint == lastOrderFingerprint && now - lastOrderAtMs < 1500L)
-                return "Duplicate order tap blocked. Wait before retrying."
-            lastOrderFingerprint = fingerprint
-            lastOrderAtMs = now
-        }
         val id = client.openOrder(asset, amount, direction, expirySec) ?: return "Could not send order"
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, System.currentTimeMillis())
         _trades.update { (listOf(rec) + it).take(500) }
