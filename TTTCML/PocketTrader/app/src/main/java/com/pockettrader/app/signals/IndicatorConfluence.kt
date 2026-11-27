@@ -21,7 +21,9 @@ data class ConfluenceReport(
 )
 
 object IndicatorConfluence {
-    fun analyze(ltf: List<Candle>, htf: List<Candle>, minScore: Int = 60, minEdge: Int = 15): ConfluenceReport {
+    // Signals require at least 80/100 confluence and a 15-point directional edge.
+    // These are agreement thresholds, not estimated win probabilities.
+    fun analyze(ltf: List<Candle>, htf: List<Candle>, minScore: Int = 80, minEdge: Int = 15): ConfluenceReport {
         val empty = ConfluenceReport(0, 0, null, "INSUFFICIENT DATA", null,
             "WAIT · need more closed candles", emptyList())
         if (ltf.size < 55) return empty
