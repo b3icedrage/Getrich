@@ -559,7 +559,7 @@ fun StrategyEditor(engine: TradingEngine) {
                 Switch(cfg.requireVolume, { engine.updateStrategy(cfg.copy(requireVolume = it)) })
                 Text("  Require tick-volume surge for breakouts (tick count is a volume proxy)", fontSize = 12.sp)
             }
-            NumField("Minimum payout %", cfg.minPayout.toDouble()) { engine.updateStrategy(cfg.copy(minPayout = it.toInt())) }
+            NumField("Minimum payout % (70 minimum)", cfg.minPayout.toDouble()) { engine.updateStrategy(cfg.copy(minPayout = it.toInt().coerceIn(70, 100))) }
         }
     }
 }
@@ -600,7 +600,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmReal = null },
             title = { Text("Confirm REAL trade") },
-            text = { Text("Place ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} on ${signal.asset}, stake ${ "%.2f".format(risk.stake)}, expiry ${expiryLabel(signal.expirySec)} using ${risk.stakePercent}% of your REAL balance? This submits an order immediately.") },
+            text = { Text("Place ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} on ${signal.asset}, ${risk.stakePercent}% balance-based stake, expiry ${expiryLabel(signal.expirySec)} using ${risk.stakePercent}% of your REAL balance? This submits an order immediately.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmReal = null
@@ -734,7 +734,7 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         NumField("Max consecutive losses (0 = off)", risk.maxConsecutiveLosses.toDouble()) { engine.updateRisk(risk.copy(maxConsecutiveLosses = it.toInt().coerceAtLeast(0))) }
         NumField("Max simultaneous open trades", risk.maxOpenTrades.toDouble()) { engine.updateRisk(risk.copy(maxOpenTrades = it.toInt().coerceIn(1, 10))) }
         NumField("Skip signals later than (seconds)", risk.maxSignalDelaySec.toDouble()) { engine.updateRisk(risk.copy(maxSignalDelaySec = it.toInt())) }
-        Text("The autotrader trades one position at a time on the selected asset, skips assets under the minimum payout, and stops itself when a limit is hit. Open binary options cannot be closed early; STOP only prevents new trades.", fontSize = 12.sp, color = Color.Gray)
+        Text("The autotrader sizes orders from the latest broker balance, enforces your local-device session window, minimum payout and risk limits. High-impact news filtering is not active because no verified news feed is connected. Open binary options cannot be closed early; STOP only prevents new trades.", fontSize = 12.sp, color = Color.Gray)
     }
 }
 
