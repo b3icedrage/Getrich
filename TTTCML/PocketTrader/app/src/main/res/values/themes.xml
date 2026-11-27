@@ -1,6 +1,0 @@
-<resources>
-    <style name="Theme.PocketTrader" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#10324A</item>
-        <item name="android:windowBackground">#121212</item>
-    </style>
-</resources>
