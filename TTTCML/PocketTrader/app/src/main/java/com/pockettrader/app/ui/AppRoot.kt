@@ -75,6 +75,7 @@ fun AppRoot(engine: TradingEngine) {
     var showWebLogin by remember { mutableStateOf(false) }
     var confirmReal by remember { mutableStateOf<Signal?>(null) }
     var confirmRealAuto by remember { mutableStateOf(false) }
+    var confirmRealIsPending by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     val conn by engine.connState.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
@@ -339,8 +340,9 @@ fun SignalsScreen(engine: TradingEngine) {
             text = { Text("Place ${signal.direction.label} on ${signal.asset} for $amount with ${expiryLabel(signal.expirySec)} expiry using your REAL balance? This order can lose money.") },
             confirmButton = { TextButton(onClick = {
                 confirmReal = null
-                feedback = if (pending?.id == signal.id) engine.acceptPendingSignal(signal, amount.toDoubleOrNull() ?: 0.0)
+                feedback = if (confirmRealIsPending) engine.acceptPendingSignal(signal, amount.toDoubleOrNull() ?: 0.0)
                     else engine.placeSignalTrade(signal, amount.toDoubleOrNull() ?: 0.0)
+                confirmRealIsPending = false
             }) { Text("Confirm real trade", color = Red) } },
             dismissButton = { TextButton(onClick = { confirmReal = null }) { Text("Cancel") } }
         )
@@ -418,7 +420,7 @@ fun SignalsScreen(engine: TradingEngine) {
                             Text(if (technical.readings.isEmpty()) "—" else "${technical.score}/100", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
                             Spacer(Modifier.width(10.dp))
                             Column {
-                                Text("Indicator confluence", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text("Technical snapshot score", color = Color.White, fontWeight = FontWeight.SemiBold)
                                 Text(technical.summary, color = Color(0xFFB8C8DA), fontSize = 11.sp)
                             }
                         }
@@ -471,7 +473,7 @@ fun SignalsScreen(engine: TradingEngine) {
                         }
                     }
                     Button(onClick = {
-                        if (account == AccountType.REAL) confirmReal = signal
+                        if (account == AccountType.REAL) { confirmReal = signal; confirmRealIsPending = isPending }
                         else feedback = if (isPending) engine.acceptPendingSignal(signal, amount.toDoubleOrNull() ?: 0.0)
                             else engine.placeSignalTrade(signal, amount.toDoubleOrNull() ?: 0.0)
                     }, enabled = conn == ConnState.CONNECTED && (amount.toDoubleOrNull() ?: 0.0) > 0.0,
