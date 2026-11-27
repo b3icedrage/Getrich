@@ -4,6 +4,25 @@ import com.pockettrader.app.protocol.Candle
 import kotlin.math.abs
 import kotlin.math.sqrt
 
+data class MarketCondition(val label: String, val detail: String)
+
+/** Descriptive recent-candle regime heuristic; not a forecast or signal. */
+fun classifyMarket(candles: List<Candle>): MarketCondition {
+    val recent = candles.takeLast(25)
+    if (recent.size < 10) return MarketCondition("Insufficient history", "Load at least 10 closed candles.")
+    val changes = recent.zipWithNext { a, b -> (b.close - a.close) / a.close.coerceAtLeast(1e-12) }
+    val mean = changes.average()
+    val variance = changes.sumOf { (it - mean) * (it - mean) } / changes.size
+    val volatility = sqrt(variance)
+    val efficiency = abs(recent.last().close - recent.first().close) /
+        recent.zipWithNext().sumOf { abs(it.second.close - it.first.close) }.coerceAtLeast(1e-12)
+    return when {
+        volatility > 0.003 -> MarketCondition("High volatility", "Recent candle returns are unusually dispersed; consider waiting.")
+        efficiency > 0.58 -> MarketCondition("Directional trend", "Recent closes show directional movement; trend strategies may be more relevant.")
+        else -> MarketCondition("Range / chop", "Recent movement is less directional; trend signals may be unreliable.")
+    }
+}
+
 enum class BacktestStrategy(val label: String) {
     EMA_CROSS("EMA 9/21 crossover"),
     RSI_REVERSION("RSI mean reversion"),

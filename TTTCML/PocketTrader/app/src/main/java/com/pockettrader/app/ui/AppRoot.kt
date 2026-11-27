@@ -55,6 +55,7 @@ import com.pockettrader.app.trading.TradingEngine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -553,6 +554,9 @@ fun AnalyticsScreen(engine: TradingEngine) {
     val trades by engine.trades.collectAsStateWithLifecycle()
     val asset by engine.selectedAsset.collectAsStateWithLifecycle()
     val account by engine.account.collectAsStateWithLifecycle()
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(1000); nowMs = System.currentTimeMillis() } }
+    val openTrades = trades.filter { it.isDemo == (account == AccountType.DEMO) && it.status in setOf(TradeStatus.PENDING, TradeStatus.OPEN) }
     var payout by rememberSaveable { mutableStateOf("80") }
     var expiryBars by rememberSaveable { mutableStateOf("1") }
     val closed = trades.filter { it.isDemo == (account == AccountType.DEMO) && it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
@@ -585,7 +589,46 @@ fun AnalyticsScreen(engine: TradingEngine) {
             }
             Text("Last ${priceHistory.size} received ticks · chart is a local price trace, not candlesticks.", fontSize = 11.sp, color = Color.Gray)
         } else Text("Waiting for enough live ticks to draw the price trace.", fontSize = 12.sp, color = Color.Gray)
+        Text("Candlestick history", fontWeight = FontWeight.Bold)
+        if (candles.size >= 2) {
+            val view = candles.takeLast(60)
+            Canvas(Modifier.fillMaxWidth().height(170.dp).background(Color(0xFF101D30), RoundedCornerShape(14.dp)).padding(8.dp)) {
+                val low = view.minOf { it.low }; val high = view.maxOf { it.high }
+                val span = (high - low).takeIf { it > 0.0 } ?: 1.0
+                val step = size.width / view.size
+                val bodyWidth = (step * 0.55f).coerceAtLeast(2f)
+                view.forEachIndexed { index, candle ->
+                    val x = step * (index + 0.5f)
+                    fun y(v: Double) = size.height - ((v - low) / span * size.height).toFloat()
+                    val up = candle.close >= candle.open
+                    val tint = if (up) Color(0xFF35D0A2) else Color(0xFFE45C72)
+                    drawLine(tint, androidx.compose.ui.geometry.Offset(x, y(candle.high)), androidx.compose.ui.geometry.Offset(x, y(candle.low)), strokeWidth = 1.5f)
+                    val top = minOf(y(candle.open), y(candle.close))
+                    val bodyHeight = maxOf(2f, kotlin.math.abs(y(candle.open) - y(candle.close)))
+                    drawRect(tint, androidx.compose.ui.geometry.Offset(x - bodyWidth / 2f, top), androidx.compose.ui.geometry.Size(bodyWidth, bodyHeight))
+                }
+            }
+            Text("Last ${view.size} closed candles · OHLC from Pocket Option history.", fontSize = 11.sp, color = Color.Gray)
+        } else Text("Candlestick chart appears when historical OHLC candles load.", fontSize = 12.sp, color = Color.Gray)
+        Text("Open trades · local expiry estimate", fontWeight = FontWeight.Bold)
+        if (openTrades.isEmpty()) Text("No open trades on this account.", fontSize = 12.sp, color = Color.Gray)
+        openTrades.forEach { trade ->
+            val left = (trade.placedAtMs + trade.expirySec * 1000L - nowMs).coerceAtLeast(0L) / 1000L
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
+                Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${trade.direction.label} ${trade.asset} · ${trade.status}", color = Color.White, fontWeight = FontWeight.Bold)
+                        Text("${if (trade.isDemo) "DEMO" else "REAL"} · ${trade.source} · ${trade.amount}", color = Color(0xFFB7C7DA), fontSize = 11.sp)
+                    }
+                    Text(if (left > 0) "${left}s left*" else "Awaiting result", color = Color(0xFFFFC76A), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        if (openTrades.isNotEmpty()) Text("*Countdown is estimated from local order time; the broker's settlement status is authoritative.", fontSize = 10.sp, color = Color.Gray)
         HorizontalDivider()
+        Text("Market condition", fontWeight = FontWeight.Bold)
+        val regime = com.pockettrader.app.analytics.classifyMarket(candles)
+        Text("${regime.label} · ${regime.detail}", fontSize = 12.sp, color = Color.Gray)
         Text("Historical strategy comparison", fontWeight = FontWeight.Bold, fontSize = 17.sp)
         Text("Uses ${candles.size} loaded closed candles for $asset. Approximate OHLC close-to-close research only; not broker fills or a prediction.", fontSize = 12.sp, color = Color.Gray)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
