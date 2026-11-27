@@ -32,6 +32,9 @@ object SmartEntryRules {
         }
         if (!crossRecent) return "no recent MACD directional crossover"
 
+        val adxNow = Indicators.adx(highs, lows, closes, 14).adx[n]
+        if (!adxNow.isFinite() || adxNow < 18.0) return "ADX below 18; market is too choppy"
+
         val rsi = Indicators.rsi(closes, 14)
         val pivots = (n - 35).coerceAtLeast(2)..(n - 3).coerceAtLeast(2)
         var divergence = false
