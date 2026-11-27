@@ -25,7 +25,7 @@ strategy-based and NOT guaranteed. Start on Demo.
 
 ## Code map
 - `protocol/` socket.io codec (SocketIo.kt), SSID parsing + servers (Ssid.kt), payload parsers (Models.kt), WebSocket client (PocketClient.kt)
-- `signals/` indicators (EMA, SMA, RSI, MACD, Bollinger, ATR, ADX, Donchian, Supertrend), candle aggregator, strategies, signal engine
+- `signals/` indicators (EMA, SMA, RSI, MACD, Bollinger, ATR, ADX, Donchian, Supertrend), candle aggregator, strategies, signal engine, adaptive analytics (3-state HMM volatility regime, KDE residual tails, pair diagnostics, conservative fractional-Kelly helper)
 - `trading/` risk manager, trading engine (orders, results, autotrader)
 - `ui/` Compose screens, WebView login
 - Tests: `app/src/test/...` (protocol, indicators, strategies, risk, mock-server client flow)
@@ -35,7 +35,7 @@ Auto (ADX regime: >25 trend/breakout, <20 mean reversion, between = no trade), M
 (higher-TF EMA200 + MACD/Supertrend cross after pullback), Mean reversion (BB + RSI 30/70),
 Volatility breakout (Donchian + tick-volume 1.5x avg; tick count is a volume proxy because
 Pocket Option streams no volume), Liquidity sweep, simple EMA cross + RSI.
-Not possible with binary options: grid/DCA, pairs trading, funding arbitrage.
+Adaptive AI mode uses a three-state HMM on absolute returns: stable regimes permit KDE-tail mean reversion, normal regimes require MTF momentum confirmation, and chaotic/uncertain regimes return no signal. This is a volatility-regime gate, not a model of pair coupling. PairAnalytics is a research-only utility requiring two synchronized close-price series; it does not place pair trades and its correlation/half-life checks are not a substitute for an out-of-sample cointegration/ADF test. OTC spread analysis fails closed unless real bid/ask quotes and a validated reference spread are supplied; the current stream does not expose a dependable dealer order book or news/order-flow data. AdaptiveRiskAllocator is a conservative sizing helper and is not wired into execution until a calibrated, out-of-sample win-probability estimate is available. Not implemented: live LSTM order-flow forecasting, Black-Litterman for binary options, or autonomous model retraining. Grid/DCA and funding arbitrage are not suitable for this fixed-expiry binary-options execution model.
 
 ## Protocol sources
 - ChipaDevTeam/BinaryOptionsTools-v2 (Rust): ssid.rs, connect.rs, regions json, modules/keep_alive.rs, trades.rs, deals.rs, balance.rs, assets.rs, subscriptions.rs, get_candles.rs, types.rs
