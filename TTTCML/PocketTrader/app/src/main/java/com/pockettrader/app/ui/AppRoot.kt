@@ -57,6 +57,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -579,6 +580,18 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val account by engine.account.collectAsStateWithLifecycle()
     val risk by engine.risk.collectAsStateWithLifecycle()
     var confirmReal by remember { mutableStateOf<Signal?>(null) }
+    var placingSignalId by remember { mutableStateOf<Long?>(null) }
+    val tradeScope = rememberCoroutineScope()
+    fun submitTt(signal: Signal) {
+        if (placingSignalId != null) return
+        placingSignalId = signal.id
+        tradeScope.launch {
+            val error = engine.placeTtSignalTrade(signal, risk.stake)
+            placingSignalId = null
+            if (error != null) onMessage(error)
+            else onMessage("TT order submitted: ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} ${signal.asset}. Check the Trades log for broker confirmation.")
+        }
+    }
     val minimumShown = (threshold - 10).coerceAtLeast(40)
     val ranked = watched.filter { it.confluenceScore >= minimumShown }
         .sortedWith(compareByDescending<Signal> { it.confluenceScore }.thenByDescending { it.emittedAtMs })
@@ -591,8 +604,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     confirmReal = null
-                    engine.placeTtSignalTrade(signal, risk.stake)?.let(onMessage)
-                        ?: onMessage("TT order submitted: ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} ${signal.asset}. Check the Trades log for broker confirmation.")
+                    submitTt(signal)
                 }) { Text("Place REAL trade", color = Red) }
             },
             dismissButton = { TextButton(onClick = { confirmReal = null }) { Text("Cancel") } }
@@ -628,8 +640,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                     Card(
                         Modifier.fillMaxWidth().then(if (eligible) Modifier.clickable {
                             if (account == AccountType.REAL) confirmReal = signal
-                            else engine.placeTtSignalTrade(signal, risk.stake)?.let(onMessage)
-                                ?: onMessage("TT order submitted: ${if (buy) "BUY" else "SELL"} ${signal.asset}. Check the Trades log for broker confirmation.")
+                            else submitTt(signal)
                         } else Modifier),
                         colors = CardDefaults.cardColors(containerColor = if (eligible) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant)
                     ) {
