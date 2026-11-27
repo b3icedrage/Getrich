@@ -485,14 +485,14 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     if (confirmRealAuto) {
         AlertDialog(onDismissRequest = { confirmRealAuto = false },
             title = { Text("Autotrade with REAL money?") },
-            text = { Text("The autotrader will place real trades of ${"%.2f".format(risk.stake)} each without asking, until a limit is hit or you press STOP. Signals are not guaranteed.") },
+            text = { Text("The autotrader will place REAL-money trades of ${"%.2f".format(risk.stake)} each automatically, without asking for each order. It stops only when a configured risk limit is hit or you press STOP. Losses are possible; signals are not guaranteed.") },
             confirmButton = { TextButton(onClick = { confirmRealAuto = false; engine.setAuto(true) }) { Text("Start on Real", color = Red) } },
             dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } })
     }
     Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
         Text("SIGNAL-DRIVEN AUTOTRADER", fontWeight = FontWeight.Bold, fontSize = 14.sp)
         Text("Nemotron is available in the AI Chat tab only. It never approves, rejects, or changes signals.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("Signal source: live Pocket Option price ticks and candle history while connected.", fontSize = 12.sp, color = Green)
+        Text("Same live quote feed, signal strategies, risk limits and Nemotron chat are available in Demo and Real. Nemotron remains chat-only.", fontSize = 12.sp, color = Green)
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("Autotrader executes signals from: ${cfg.type.label}", fontWeight = FontWeight.Bold)
         Text("Status: $status")
@@ -501,11 +501,11 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         if (!auto) {
             Button(onClick = {
                 when {
-                    conn != ConnState.CONNECTED -> onMessage("Connect first (Trade tab).")
-                    account == AccountType.REAL -> onMessage("Automatic trading is currently demo-only. Switch to Demo first.")
+                    conn != ConnState.CONNECTED -> onMessage("Connect to the selected account first (Trade tab).")
+                    account == AccountType.REAL -> confirmRealAuto = true
                     else -> engine.setAuto(true)
                 }
-            }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = Green)) {
+            }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = if (account == AccountType.REAL) Red else Green)) {
                 Text("Start autotrader on ${account.name}")
             }
         } else {
