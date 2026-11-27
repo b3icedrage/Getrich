@@ -515,10 +515,10 @@ class TradingEngine(context: Context) {
         var quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
         if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS) {
             client.subscribeMarket(signal.asset)
-            repeat(20) {
+            for (attempt in 0 until 20) {
                 delay(250)
                 quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
-                if (quoteAt > 0L && System.currentTimeMillis() - quoteAt <= MAX_TICK_AGE_MS) return@repeat
+                if (quoteAt > 0L && System.currentTimeMillis() - quoteAt <= MAX_TICK_AGE_MS) break
             }
         }
         if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS)
