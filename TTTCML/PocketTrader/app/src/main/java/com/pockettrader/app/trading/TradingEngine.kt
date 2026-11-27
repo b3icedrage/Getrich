@@ -294,6 +294,11 @@ class TradingEngine(context: Context) {
     }
 
     fun setAuto(on: Boolean, reason: String? = null) {
+        if (on && _account.value != AccountType.DEMO) {
+            _autoStatus.value = "Blocked: AI Auto Trade is demo-only"
+            log("AI Autotrader start blocked: real-account execution is disabled")
+            return
+        }
         if (on && !_aiConfigured.value) {
             _autoStatus.value = "Blocked: add your NVIDIA API key first"
             log("Autotrader start blocked: NVIDIA API key required")
