@@ -1,5 +1,13 @@
 package com.pockettrader.app.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -69,11 +78,19 @@ fun AppRoot(engine: TradingEngine) {
 
     Scaffold(
         topBar = {
-            Column(Modifier.background(if (account == AccountType.REAL) Color(0xFF4A1010) else Color(0xFF10324A)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Column(Modifier.background(Brush.horizontalGradient(if (account == AccountType.REAL) listOf(Color(0xFF5B171D), Color(0xFF241116)) else listOf(Color(0xFF123B55), Color(0xFF101D35)))).padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("PocketTrader", fontWeight = FontWeight.Bold)
-                        Text("${account.name} · ${connLabel(conn)} · Balance ${balance?.let { "%.2f".format(it) } ?: "-"}", fontSize = 13.sp)
+                        Text("PocketTrader", fontWeight = FontWeight.Bold, fontSize = 21.sp, letterSpacing = 0.3.sp, color = Color.White)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val online = conn == ConnState.CONNECTED
+                            Box(Modifier.size(7.dp).background(if (online) Color(0xFF4ADE80) else Color(0xFFFBBF24), androidx.compose.foundation.shape.CircleShape))
+                            Spacer(Modifier.width(6.dp))
+                            Text("${account.name} · ${connLabel(conn)}", fontSize = 12.sp, color = Color.White.copy(alpha = 0.82f))
+                        }
+                        AnimatedContent(targetState = balance, transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.96f)) togetherWith (fadeOut() + scaleOut(targetScale = 0.96f)) }, label = "balance-value") { value ->
+                            Text("Balance  ${value?.let { "%.2f".format(it) } ?: "—"}", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
                     }
                     SingleChoiceSegmentedButtonRow {
                         SegmentedButton(selected = account == AccountType.DEMO, onClick = { message = engine.switchAccount(AccountType.DEMO) },
@@ -103,13 +120,19 @@ fun AppRoot(engine: TradingEngine) {
             }
         },
     ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
-            when (tab) {
+        Box(Modifier.padding(pad).fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = { (slideInHorizontally { it / 10 } + fadeIn()) togetherWith (slideOutHorizontally { -it / 10 } + fadeOut()) },
+                label = "screen-transition"
+            ) { activeTab ->
+            when (activeTab) {
                 Tab.TRADE -> TradeScreen(engine) { message = it }
                 Tab.SIGNALS -> SignalsScreen(engine)
                 Tab.AUTO -> AutoScreen(engine) { message = it }
                 Tab.LOG -> LogScreen(engine)
                 Tab.ACCOUNT -> AccountScreen(engine, onWebLogin = { showWebLogin = true }) { message = it }
+            }
             }
         }
     }
