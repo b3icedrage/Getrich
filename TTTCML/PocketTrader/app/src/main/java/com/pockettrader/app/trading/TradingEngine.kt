@@ -504,17 +504,25 @@ class TradingEngine(context: Context) {
         return result
     }
 
-    /** A tap on an eligible TT card submits one order for that signal's own pair. */
-    fun placeTtSignalTrade(signal: Signal, amount: Double): String? {
+    /** Refreshes the signal's own broker stream, then submits only against a fresh quote. */
+    suspend fun placeTtSignalTrade(signal: Signal, amount: Double): String? {
         if (connState.value != ConnState.CONNECTED) return "Connect to Pocket Option first."
         if (client.isDemo != (_account.value == AccountType.DEMO)) return "Session/account mismatch. Reconnect to the selected account."
         if (signal.confluenceScore < _minConfluence.value) return "This TT signal is below your selected threshold and is watch-only."
         if (_signals.value.none { it.id == signal.id }) return "This signal did not pass the trade filters or is no longer eligible."
-        val quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
+        if (System.currentTimeMillis() - signal.emittedAtMs > MAX_TT_SIGNAL_AGE_MS)
+            return "This \${signal.asset} signal has expired. Wait for a fresh BUY/SELL signal."
+        var quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
+        if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS) {
+            client.subscribeMarket(signal.asset)
+            repeat(20) {
+                delay(250)
+                quoteAt = synchronized(lock) { marketTickAtMs[signal.asset] ?: 0L }
+                if (quoteAt > 0L && System.currentTimeMillis() - quoteAt <= MAX_TICK_AGE_MS) return@repeat
+            }
+        }
         if (quoteAt <= 0L || System.currentTimeMillis() - quoteAt > MAX_TICK_AGE_MS)
-            return "The \${signal.asset} quote is stale. Wait for a fresh broker quote."
-        if (riskManager.isLate(signal.entryAtSec, client.serverNowSec()))
-            return "This signal is too old to enter safely. Wait for a new TT signal."
+            return "No fresh Pocket Option quote received for \${signal.asset}. Check the broker connection and try a newer signal."
         val payout = _assets.value.firstOrNull { it.symbol == signal.asset }?.payout
         if (payout != null && payout < _strategy.value.minPayout)
             return "\${signal.asset} payout is below your configured minimum."
@@ -613,7 +621,7 @@ class TradingEngine(context: Context) {
         }
     }
 
-    private companion object { const val MAX_TICK_AGE_MS = 15_000L }
+    private companion object { const val MAX_TICK_AGE_MS = 15_000L; const val MAX_TT_SIGNAL_AGE_MS = 15_000L }
 
     private fun riskLimitHit(reason: String) =
         reason.startsWith("Max trades") || reason.startsWith("Daily") || reason.startsWith("Max consecutive") || reason.startsWith("Next stake")
