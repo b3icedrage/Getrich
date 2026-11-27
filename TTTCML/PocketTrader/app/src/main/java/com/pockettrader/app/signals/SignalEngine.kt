@@ -63,15 +63,19 @@ class SignalEngine(cfg: StrategyConfig) {
         if (closed.startSec <= lastEvaluated) return null
         lastEvaluated = closed.startSec
         val htfCandles = htf.candles + listOfNotNull(htf.forming)
-        val d = Strategies.evaluate(config, ltf.candles, htfCandles) ?: return null
-        // Independent indicator confluence is a final quality gate. It can veto a strategy
-        // signal when the broader indicator picture is weak or points the other way.
-        val analysis = IndicatorConfluence.analyze(ltf.candles, htfCandles, minScore = (minConfluenceScore - 10).coerceAtLeast(40))
-        if (analysis.recommendation != d.direction) return null
+        // TT is a market-wide indicator scanner, not a filter on the currently
+        // selected strategy's rare entry triggers. Evaluate every closed candle and
+        // publish a directional confluence candidate whenever it clears the watch
+        // floor and directional edge. TradingEngine applies stricter execution checks.
+        val analysis = IndicatorConfluence.analyze(
+            ltf.candles, htfCandles,
+            minScore = (minConfluenceScore - 10).coerceAtLeast(40)
+        )
+        val direction = analysis.recommendation ?: return null
         val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
-        val reason = "${d.reason} | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
-        val score = if (d.direction == Direction.CALL) analysis.callScore else analysis.putScore
-        return Signal(globalSignalIds.getAndIncrement(), asset, d.direction, d.strategy, reason,
+        val reason = "Market-wide indicator scan | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
+        val score = if (direction == Direction.CALL) analysis.callScore else analysis.putScore
+        return Signal(globalSignalIds.getAndIncrement(), asset, direction, config.type, reason,
             closed.startSec + config.timeframeSec, config.expirySec, nowMs, score)
     }
 }
