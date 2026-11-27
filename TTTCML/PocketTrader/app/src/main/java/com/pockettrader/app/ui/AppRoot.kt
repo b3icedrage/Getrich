@@ -600,7 +600,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         AlertDialog(
             onDismissRequest = { confirmReal = null },
             title = { Text("Confirm REAL trade") },
-            text = { Text("Place ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} on ${signal.asset}, stake ${ "%.2f".format(risk.stake)}, expiry ${expiryLabel(signal.expirySec)} using your REAL balance? This submits an order immediately.") },
+            text = { Text("Place ${if (signal.direction == Direction.CALL) "BUY" else "SELL"} on ${signal.asset}, stake ${ "%.2f".format(risk.stake)}, expiry ${expiryLabel(signal.expirySec)} using ${risk.stakePercent}% of your REAL balance? This submits an order immediately.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmReal = null
@@ -689,7 +689,7 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     if (confirmRealAuto) {
         AlertDialog(onDismissRequest = { confirmRealAuto = false },
             title = { Text("Autotrade with REAL money?") },
-            text = { Text("The autotrader will place REAL-money trades of ${"%.2f".format(risk.stake)} each automatically, without asking for each order. It stops only when a configured risk limit is hit or you press STOP. Losses are possible; signals are not guaranteed.") },
+            text = { Text("The autotrader will place REAL-money trades sized at ${risk.stakePercent}% of the latest broker balance automatically, without asking for each order. It stops only when a configured risk limit is hit or you press STOP. Losses are possible; signals are not guaranteed.") },
             confirmButton = { TextButton(onClick = { confirmRealAuto = false; engine.setAuto(true) }) { Text("Start on Real", color = Red) } },
             dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } })
     }
@@ -721,10 +721,11 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("Risk limits", fontWeight = FontWeight.Bold)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 0.5, maxTradesPerSession = 5, dailyStopLoss = 2.0, dailyTakeProfit = 2.0, maxConsecutiveLosses = 2, maxOpenTrades = 1, maxSignalDelaySec = 2)) }) { Text("Conservative") }
-            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 1.0, maxTradesPerSession = 10, dailyStopLoss = 10.0, dailyTakeProfit = 10.0, maxConsecutiveLosses = 3, maxOpenTrades = 1, maxSignalDelaySec = 3)) }) { Text("Balanced") }
+            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 0.5, stakePercent = 0.5, maxTradesPerSession = 5, dailyStopLoss = 2.0, dailyTakeProfit = 2.0, maxConsecutiveLosses = 2, maxOpenTrades = 1, maxSignalDelaySec = 2)) }) { Text("Conservative") }
+            OutlinedButton(onClick = { engine.updateRisk(risk.copy(stake = 1.0, stakePercent = 1.0, maxTradesPerSession = 10, dailyStopLoss = 10.0, dailyTakeProfit = 10.0, maxConsecutiveLosses = 3, maxOpenTrades = 1, maxSignalDelaySec = 3)) }) { Text("Balanced") }
         }
-        NumField("Fixed stake per trade", risk.stake) { engine.updateRisk(risk.copy(stake = it)) }
+        NumField("Balance risk per trade (%)", risk.stakePercent) { engine.updateRisk(risk.copy(stakePercent = it.coerceIn(0.1, 5.0))) }
+        NumField("Minimum broker stake", risk.minimumStake) { engine.updateRisk(risk.copy(minimumStake = it.coerceAtLeast(0.1))) }
         NumField("Max trades per session", risk.maxTradesPerSession.toDouble()) { engine.updateRisk(risk.copy(maxTradesPerSession = it.toInt())) }
         NumField("Daily stop-loss (0 = off)", risk.dailyStopLoss) { engine.updateRisk(risk.copy(dailyStopLoss = it)) }
         NumField("Daily take-profit (0 = off)", risk.dailyTakeProfit) { engine.updateRisk(risk.copy(dailyTakeProfit = it)) }
