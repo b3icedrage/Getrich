@@ -34,14 +34,14 @@ class RiskManager(var config: RiskConfig) {
     var state = RiskState()
         private set
 
-    fun rollDay(dayKey: String) {
+    @Synchronized fun rollDay(dayKey: String) {
         if (state.dayKey != dayKey) state = state.copy(dayKey = dayKey, dailyPnl = 0.0, consecutiveLosses = 0)
     }
 
-    fun resetSession() { state = state.copy(sessionTrades = 0, consecutiveLosses = 0) }
+    @Synchronized fun resetSession() { state = state.copy(sessionTrades = 0, consecutiveLosses = 0) }
 
     /** null = allowed, otherwise the reason it is blocked. */
-    fun blockReason(dayKey: String): String? {
+    @Synchronized fun blockReason(dayKey: String): String? {
         rollDay(dayKey)
         val c = config; val s = state
         return when {
@@ -57,12 +57,20 @@ class RiskManager(var config: RiskConfig) {
         }
     }
 
-    fun onOpened() { state = state.copy(sessionTrades = state.sessionTrades + 1, openTrades = state.openTrades + 1) }
+    /** Atomically checks limits and reserves a slot before a network order request. */
+    @Synchronized fun reserveOpen(dayKey: String): String? {
+        val blocked = blockReason(dayKey)
+        if (blocked != null) return blocked
+        onOpened()
+        return null
+    }
+
+    @Synchronized fun onOpened() { state = state.copy(sessionTrades = state.sessionTrades + 1, openTrades = state.openTrades + 1) }
 
     /** Order rejected by the server: give back the slot. */
-    fun onRejected() { state = state.copy(sessionTrades = maxOf(0, state.sessionTrades - 1), openTrades = maxOf(0, state.openTrades - 1)) }
+    @Synchronized fun onRejected() { state = state.copy(sessionTrades = maxOf(0, state.sessionTrades - 1), openTrades = maxOf(0, state.openTrades - 1)) }
 
-    fun onClosed(netProfit: Double, dayKey: String) {
+    @Synchronized fun onClosed(netProfit: Double, dayKey: String) {
         rollDay(dayKey)
         state = state.copy(
             openTrades = maxOf(0, state.openTrades - 1),
@@ -75,5 +83,5 @@ class RiskManager(var config: RiskConfig) {
         )
     }
 
-    fun isLate(entryAtSec: Long, serverNowSec: Double): Boolean = serverNowSec - entryAtSec > config.maxSignalDelaySec
+    @Synchronized fun isLate(entryAtSec: Long, serverNowSec: Double): Boolean = serverNowSec - entryAtSec > config.maxSignalDelaySec
 }
