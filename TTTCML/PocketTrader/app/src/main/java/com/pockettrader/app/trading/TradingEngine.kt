@@ -237,7 +237,7 @@ class TradingEngine(context: Context) {
         val result = synchronized(lock) {
             val ltfCandles = signalEngine.ltf.candles
             val htfCandles = signalEngine.htf.candles + listOfNotNull(signalEngine.htf.forming)
-            val decision = Strategies.evaluate(cfg, ltfCandles, htfCandles) ?: return@synchronized null
+            val decision = Strategies.consensus(cfg, ltfCandles, htfCandles) ?: return@synchronized null
             Signal(
                 id = System.currentTimeMillis(),
                 asset = sym,
