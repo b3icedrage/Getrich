@@ -17,6 +17,8 @@ data class Signal(
     val emittedAtMs: Long,
     /** Directional indicator-agreement score (0-100), not a win probability. */
     val confluenceScore: Int = 0,
+    /** Broker price at signal emission; informational until an order is accepted. */
+    val referencePrice: Double? = null,
 )
 
 /**
@@ -78,6 +80,6 @@ class SignalEngine(cfg: StrategyConfig) {
         val reason = "Smart entry confirmed (EMA200 + MACD cross + RSI divergence + S/R rejection) | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
         val score = if (direction == Direction.CALL) analysis.callScore else analysis.putScore
         return Signal(globalSignalIds.getAndIncrement(), asset, direction, config.type, reason,
-            closed.startSec + config.timeframeSec, config.expirySec, nowMs, score)
+            closed.startSec + config.timeframeSec, config.expirySec, nowMs, score, closed.close)
     }
 }
