@@ -14,6 +14,8 @@ data class Signal(
     val expirySec: Int,
     /** Wall-clock millis when the app emitted the signal. */
     val emittedAtMs: Long,
+    /** Directional indicator-agreement score (0-100), not a win probability. */
+    val confluenceScore: Int = 0,
 )
 
 /**
@@ -63,11 +65,12 @@ class SignalEngine(cfg: StrategyConfig) {
         val d = Strategies.evaluate(config, ltf.candles, htfCandles) ?: return null
         // Independent indicator confluence is a final quality gate. It can veto a strategy
         // signal when the broader indicator picture is weak or points the other way.
-        val analysis = IndicatorConfluence.analyze(ltf.candles, htfCandles, minScore = minConfluenceScore)
+        val analysis = IndicatorConfluence.analyze(ltf.candles, htfCandles, minScore = (minConfluenceScore - 10).coerceAtLeast(40))
         if (analysis.recommendation != d.direction) return null
         val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
         val reason = "${d.reason} | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
+        val score = if (d.direction == Direction.CALL) analysis.callScore else analysis.putScore
         return Signal(nextId++, asset, d.direction, d.strategy, reason,
-            closed.startSec + config.timeframeSec, config.expirySec, nowMs)
+            closed.startSec + config.timeframeSec, config.expirySec, nowMs, score)
     }
 }
