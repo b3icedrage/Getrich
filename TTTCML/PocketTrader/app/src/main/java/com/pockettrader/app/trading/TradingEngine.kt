@@ -516,7 +516,11 @@ class TradingEngine(context: Context) {
     // ---------------- signals & autotrader ----------------
 
     private fun onSignal(sig: Signal) {
-        val technical = synchronized(lock) { analyseTechnicalMarket(signalEngine.ltf.candles) }
+        val technical = synchronized(lock) {
+            val candles = marketEngines[sig.asset]?.ltf?.candles
+                ?: if (sig.asset == _asset.value) signalEngine.ltf.candles else emptyList()
+            analyseTechnicalMarket(candles)
+        }
         if (technical.direction != sig.direction) {
             log("Signal filtered: technical confluence does not confirm ${sig.direction.label} on ${sig.asset}; analysis says ${technical.label}")
             return
