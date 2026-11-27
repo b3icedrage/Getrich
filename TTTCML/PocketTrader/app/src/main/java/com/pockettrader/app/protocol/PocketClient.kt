@@ -217,6 +217,11 @@ class PocketClient(private val scope: CoroutineScope, private val http: OkHttpCl
         if (_state.value == ConnState.CONNECTED) sendSymbol(asset, periodSec)
     }
 
+    /** Subscribe to an additional market without changing the selected chart. */
+    fun subscribeMarket(asset: String) {
+        if (_state.value == ConnState.CONNECTED) ws?.send(PocketFrames.subscribe(asset))
+    }
+
     private fun sendSymbol(asset: String, periodSec: Int) {
         val w = ws ?: return
         w.send(PocketFrames.changeSymbol(asset, periodSec))
