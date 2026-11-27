@@ -29,7 +29,7 @@ data class StrategyConfig(
     /** Lower (signal) timeframe in seconds: 15, 30, 60, 300 or 900. */
     val timeframeSec: Int = 60,
     /** Higher timeframe used by the trend filter, seconds (e.g. 900, 3600). */
-    val higherTimeframeSec: Int = 900,
+    val higherTimeframeSec: Int = 3600,
     /** Trade expiry in seconds. Default = one signal candle. */
     val expirySec: Int = 60,
     val htfEmaPeriod: Int = 200,
