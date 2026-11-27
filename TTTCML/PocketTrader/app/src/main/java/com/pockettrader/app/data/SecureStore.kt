@@ -139,6 +139,14 @@ class SecureStore(context: Context) {
         )
     }
 
+    fun saveMinConfluence(value: Int) {
+        plain.edit().putInt("min_confluence", value.coerceIn(40, 90)).apply()
+    }
+
+    fun loadMinConfluence(): Int = plain.getInt("min_confluence", 80).let {
+        if (it in listOf(40, 50, 60, 70, 80, 90)) it else 80
+    }
+
     var lastAsset: String
         get() = plain.getString("asset", "EURUSD_otc")!!
         set(v) { plain.edit().putString("asset", v).apply() }
