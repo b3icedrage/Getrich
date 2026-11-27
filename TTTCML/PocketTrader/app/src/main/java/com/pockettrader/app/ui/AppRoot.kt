@@ -386,7 +386,7 @@ fun SignalsScreen(engine: TradingEngine) {
                                 }
                             }
                         }
-                        Text("The selected level is a minimum agreement score, not a predicted win rate. Conflicting indicators or insufficient directional edge still produce WAIT.", color = Color(0xFF91A8C5), fontSize = 10.sp)
+                        Text("Smart entries also require EMA 200 alignment on the signal and selected higher timeframe, a recent MACD cross, RSI divergence, and a support/resistance rejection or pullback. Payout floor defaults to 70%. Scores are not win probabilities.", color = Color(0xFF91A8C5), fontSize = 10.sp)
                         HorizontalDivider(color = Color(0xFF34465D))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = auto, onCheckedChange = { enabled ->
@@ -726,6 +726,8 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         }
         NumField("Balance risk per trade (%)", risk.stakePercent) { engine.updateRisk(risk.copy(stakePercent = it.coerceIn(0.1, 5.0))) }
         NumField("Minimum broker stake", risk.minimumStake) { engine.updateRisk(risk.copy(minimumStake = it.coerceAtLeast(0.1))) }
+        NumField("Session start hour (device local, 0–23)", risk.sessionStartHour.toDouble()) { engine.updateRisk(risk.copy(sessionStartHour = it.toInt().coerceIn(0, 23))) }
+        NumField("Session end hour (exclusive, device local)", risk.sessionEndHour.toDouble()) { engine.updateRisk(risk.copy(sessionEndHour = it.toInt().coerceIn(0, 23))) }
         NumField("Max trades per session", risk.maxTradesPerSession.toDouble()) { engine.updateRisk(risk.copy(maxTradesPerSession = it.toInt())) }
         NumField("Daily stop-loss (0 = off)", risk.dailyStopLoss) { engine.updateRisk(risk.copy(dailyStopLoss = it)) }
         NumField("Daily take-profit (0 = off)", risk.dailyTakeProfit) { engine.updateRisk(risk.copy(dailyTakeProfit = it)) }
