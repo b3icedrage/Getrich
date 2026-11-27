@@ -1,6 +1,7 @@
 package com.pockettrader.app
 
 import com.pockettrader.app.analytics.BacktestEngine
+import com.pockettrader.app.analytics.BacktestStrategy
 import com.pockettrader.app.protocol.Candle
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,4 +21,28 @@ class BacktestEngineTest {
         assertTrue(reports.all { it.trades <= candles.size })
         assertTrue(reports.all { it.winRatePct in 0.0..100.0 })
     }
+    @Test fun walkForwardKeepsHoldoutChronologicallySeparate() {
+        val candles = (0 until 300).map { i ->
+            val p = 1.2 + i * 0.0002 + kotlin.math.sin(i / 5.0) * 0.008
+            Candle(i.toLong(), p, p, p + 0.001, p - 0.001)
+        }
+        val report = BacktestEngine.walkForward(candles, BacktestStrategy.EMA_CROSS, 80.0, 2)
+        assertEquals(180, report.splitIndex)
+        assertEquals(300, report.totalCandles)
+        assertTrue(report.training.trades <= report.splitIndex)
+        assertTrue(report.outOfSample.trades <= candles.size - report.splitIndex)
+        assertTrue(report.breakEvenWinRatePct in 0.0..100.0)
+        assertTrue(report.expectancyPerTrade.isFinite())
+    }
+
+    @Test fun walkForwardDoesNotClaimEdgeWithInsufficientHistory() {
+        val candles = (0 until 60).map { i ->
+            val p = 1.0 + kotlin.math.sin(i / 3.0) * 0.01
+            Candle(i.toLong(), p, p, p + 0.001, p - 0.001)
+        }
+        val report = BacktestEngine.walkForward(candles, BacktestStrategy.EMA_CROSS)
+        assertTrue(report.assessment.startsWith("INSUFFICIENT HISTORY"))
+        assertEquals(0, report.outOfSample.trades)
+    }
+
 }
