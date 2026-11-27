@@ -23,6 +23,7 @@ data class Signal(
 class SignalEngine(cfg: StrategyConfig) {
     var config: StrategyConfig = cfg
         private set
+    var minConfluenceScore: Int = 80
     var ltf = CandleAggregator(cfg.timeframeSec)
         private set
     var htf = CandleAggregator(cfg.higherTimeframeSec)
@@ -62,7 +63,7 @@ class SignalEngine(cfg: StrategyConfig) {
         val d = Strategies.evaluate(config, ltf.candles, htfCandles) ?: return null
         // Independent indicator confluence is a final quality gate. It can veto a strategy
         // signal when the broader indicator picture is weak or points the other way.
-        val analysis = IndicatorConfluence.analyze(ltf.candles, htfCandles)
+        val analysis = IndicatorConfluence.analyze(ltf.candles, htfCandles, minScore = minConfluenceScore)
         if (analysis.recommendation != d.direction) return null
         val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
         val reason = "${d.reason} | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility"
