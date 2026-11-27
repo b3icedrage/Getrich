@@ -513,18 +513,20 @@ class TradingEngine(context: Context) {
     // ---------------- signals & autotrader ----------------
 
     private fun onSignal(sig: Signal) {
+        // TT must show market-wide confluence candidates even when the separate
+        // execution-quality filter rejects them. Keep discovery and trade approval apart.
+        _ttSignals.update { (listOf(sig) + it).distinctBy { item -> item.id }.take(100) }
+        if (sig.confluenceScore < _minConfluence.value) {
+            log("TT watchlist: ${sig.asset} ${sig.direction.label} at ${sig.confluenceScore}% is near the ${_minConfluence.value}% threshold; no order placed")
+            return
+        }
         val technical = synchronized(lock) {
             val candles = marketEngines[sig.asset]?.ltf?.candles
                 ?: if (sig.asset == _asset.value) signalEngine.ltf.candles else emptyList()
             analyseTechnicalMarket(candles)
         }
         if (technical.direction != sig.direction) {
-            log("Signal filtered: technical confluence does not confirm ${sig.direction.label} on ${sig.asset}; analysis says ${technical.label}")
-            return
-        }
-        _ttSignals.update { (listOf(sig) + it).distinctBy { item -> item.id }.take(100) }
-        if (sig.confluenceScore < _minConfluence.value) {
-            log("TT watchlist: ${sig.asset} ${sig.direction.label} at ${sig.confluenceScore}% is near the ${_minConfluence.value}% threshold; no order placed")
+            log("TT candidate shown; trade filtered because technical analysis says ${technical.label} on ${sig.asset}")
             return
         }
         _signals.update { (listOf(sig) + it).take(100) }
