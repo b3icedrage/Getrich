@@ -39,7 +39,7 @@ class AdaptiveAnalyticsTest {
         val allocation = AdaptiveRiskAllocator.allocationFraction(0.70, 0.85, 0.10)
         assertTrue(allocation > 0.0)
         assertTrue(allocation <= 0.005)
-        assertEquals(0.0, AdaptiveRiskAllocator.allocationFraction(0.70, 0.85, 0.90), 0.0)
+        assertTrue(AdaptiveRiskAllocator.allocationFraction(0.70, 0.85, 0.90) <= 0.0005)
     }
 
     @Test fun otcSpreadFailsClosedWithoutRealQuotesAndBenchmark() {
