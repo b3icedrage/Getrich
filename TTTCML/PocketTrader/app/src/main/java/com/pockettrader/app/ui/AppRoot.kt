@@ -764,6 +764,13 @@ fun AnalyticsScreen(engine: TradingEngine) {
     val reports = remember(candles, payout, expiryBars) {
         com.pockettrader.app.analytics.BacktestEngine.compare(candles, payout.toDoubleOrNull() ?: 80.0, expiryBars.toIntOrNull() ?: 1)
     }
+    val holdoutReports = remember(candles, payout, expiryBars) {
+        com.pockettrader.app.analytics.BacktestStrategy.entries.map { strategyType ->
+            com.pockettrader.app.analytics.BacktestEngine.walkForward(
+                candles, strategyType, payout.toDoubleOrNull() ?: 80.0, expiryBars.toIntOrNull() ?: 1
+            )
+        }
+    }
     Column(Modifier.fillMaxSize().padding(14.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("PERFORMANCE · ${account.name}", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -864,6 +871,22 @@ fun AnalyticsScreen(engine: TradingEngine) {
         }
         if (reports.all { it.trades == 0 }) Text("Not enough history or no qualifying setups yet. Load more Pocket Option history before interpreting these results.", fontSize = 12.sp, color = Color.Gray)
         HorizontalDivider()
+        Text("Out-of-sample validation", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("Chronological split: first 60% for in-sample research, final 40% for holdout evaluation. The holdout uses earlier candles only for indicator warm-up. It is still an OHLC approximation, not broker settlement.", fontSize = 11.sp, color = Color.Gray)
+        holdoutReports.forEach { report ->
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(report.strategy.label, color = Color.White, fontWeight = FontWeight.Bold)
+                    Text("Train ${report.training.trades} trades · Holdout ${report.outOfSample.trades} trades", color = Color(0xFFB7C7DA), fontSize = 11.sp)
+                    Text("Holdout win rate ${"%.1f".format(report.outOfSample.winRatePct)}% · break-even ${"%.1f".format(report.breakEvenWinRatePct)}% · net ${"%+.2f".format(report.outOfSample.netUnits)} units",
+                        color = Color.White, fontSize = 12.sp)
+                    Text("Holdout expectancy ${"%+.3f".format(report.expectancyPerTrade)} units/trade · max DD ${"%.2f".format(report.outOfSample.maxDrawdownUnits)}",
+                        color = Color(0xFFB7C7DA), fontSize = 11.sp)
+                    Text(report.assessment, color = if (report.outOfSample.netUnits > 0.0 && report.outOfSample.trades >= 30) Color(0xFF58E0C4) else Color(0xFFFFC76A),
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
         Text("Export account trade history", fontWeight = FontWeight.Bold)
         Button(onClick = {
             val send = Intent(Intent.ACTION_SEND).setType("text/csv")
