@@ -923,15 +923,23 @@ fun LogScreen(engine: TradingEngine) {
     val context = LocalContext.current
     val trades by engine.trades.collectAsStateWithLifecycle()
     val logs by engine.logs.collectAsStateWithLifecycle()
+    val journal by engine.signalJournal.collectAsStateWithLifecycle()
     var showEvents by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         val closed = trades.filter { it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
         val wins = closed.count { it.status == TradeStatus.WIN }
         Text("Trades ${trades.size} · Closed ${closed.size} · Wins $wins · Win rate ${if (closed.isEmpty()) "-" else "${wins * 100 / closed.size}%"} · Net ${"%+.2f".format(closed.sumOf { it.netProfit ?: 0.0 })}")
-        OutlinedButton(onClick = {
-            val send = Intent(Intent.ACTION_SEND).setType("text/csv").putExtra(Intent.EXTRA_SUBJECT, "PocketTrader trade history").putExtra(Intent.EXTRA_TEXT, engine.exportTradesCsv())
-            runCatching { context.startActivity(Intent.createChooser(send, "Export trade history")) }
-        }) { Text("Export CSV") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/csv").putExtra(Intent.EXTRA_SUBJECT, "PocketTrader trade history").putExtra(Intent.EXTRA_TEXT, engine.exportTradesCsv())
+                runCatching { context.startActivity(Intent.createChooser(send, "Export trade history")) }
+            }) { Text("Export trades") }
+            OutlinedButton(onClick = {
+                val send = Intent(Intent.ACTION_SEND).setType("text/csv").putExtra(Intent.EXTRA_SUBJECT, "PocketTrader signal audit").putExtra(Intent.EXTRA_TEXT, engine.exportSignalJournalCsv())
+                runCatching { context.startActivity(Intent.createChooser(send, "Export signal audit")) }
+            }) { Text("Export signals") }
+        }
+        Text("Signal journal: ${journal.size} records · includes reference/entry price, expiry, broker result and net return", fontSize = 11.sp, color = Color.Gray)
         Row { FilterChip(!showEvents, { showEvents = false }, { Text("Trades") }); Spacer(Modifier.width(8.dp)); FilterChip(showEvents, { showEvents = true }, { Text("Events") }) }
         LazyColumn {
             if (!showEvents) items(trades, key = { it.requestId }) { t ->
