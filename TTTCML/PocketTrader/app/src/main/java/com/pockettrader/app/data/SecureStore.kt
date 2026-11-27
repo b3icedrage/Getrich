@@ -71,7 +71,16 @@ class SecureStore(context: Context) {
             .putFloat("st_rsi_lo", c.rsiOversold.toFloat()).putFloat("st_rsi_hi", c.rsiOverbought.toFloat())
             .putFloat("st_adx_t", c.adxTrend.toFloat()).putFloat("st_adx_r", c.adxRange.toFloat())
             .putFloat("st_vol", c.volumeMult.toFloat()).putBoolean("st_req_vol", c.requireVolume)
-            .putInt("st_min_pay", c.minPayout).apply()
+            .putInt("st_min_pay", c.minPayout)
+            .putInt("st_pull_ema", c.pullbackEma).putInt("st_pull_lb", c.pullbackLookback)
+            .putInt("st_macd_fast", c.macdFast).putInt("st_macd_slow", c.macdSlow).putInt("st_macd_sig", c.macdSignal)
+            .putInt("st_st_period", c.supertrendPeriod).putFloat("st_st_mult", c.supertrendMult.toFloat())
+            .putInt("st_bb_period", c.bbPeriod).putFloat("st_bb_k", c.bbK.toFloat())
+            .putInt("st_rsi_period", c.rsiPeriod).putInt("st_donchian", c.donchianPeriod)
+            .putInt("st_vol_avg", c.volumeAvgPeriod).putInt("st_sweep", c.sweepLookback)
+            .putInt("st_adx_period", c.adxPeriod).putInt("st_ema_fast", c.emaFast).putInt("st_ema_slow", c.emaSlow)
+            .putFloat("st_adapt_conf", c.adaptiveMinRegimeConfidence.toFloat())
+            .putFloat("st_adapt_tail", c.adaptiveMaxTailProbability.toFloat()).apply()
     }
 
     fun loadStrategy(): StrategyConfig {
@@ -90,6 +99,24 @@ class SecureStore(context: Context) {
             volumeMult = plain.getFloat("st_vol", d.volumeMult.toFloat()).toDouble(),
             requireVolume = plain.getBoolean("st_req_vol", d.requireVolume),
             minPayout = plain.getInt("st_min_pay", d.minPayout),
+            pullbackEma = plain.getInt("st_pull_ema", d.pullbackEma),
+            pullbackLookback = plain.getInt("st_pull_lb", d.pullbackLookback),
+            macdFast = plain.getInt("st_macd_fast", d.macdFast),
+            macdSlow = plain.getInt("st_macd_slow", d.macdSlow),
+            macdSignal = plain.getInt("st_macd_sig", d.macdSignal),
+            supertrendPeriod = plain.getInt("st_st_period", d.supertrendPeriod),
+            supertrendMult = plain.getFloat("st_st_mult", d.supertrendMult.toFloat()).toDouble(),
+            bbPeriod = plain.getInt("st_bb_period", d.bbPeriod),
+            bbK = plain.getFloat("st_bb_k", d.bbK.toFloat()).toDouble(),
+            rsiPeriod = plain.getInt("st_rsi_period", d.rsiPeriod),
+            donchianPeriod = plain.getInt("st_donchian", d.donchianPeriod),
+            volumeAvgPeriod = plain.getInt("st_vol_avg", d.volumeAvgPeriod),
+            sweepLookback = plain.getInt("st_sweep", d.sweepLookback),
+            adxPeriod = plain.getInt("st_adx_period", d.adxPeriod),
+            emaFast = plain.getInt("st_ema_fast", d.emaFast),
+            emaSlow = plain.getInt("st_ema_slow", d.emaSlow),
+            adaptiveMinRegimeConfidence = plain.getFloat("st_adapt_conf", d.adaptiveMinRegimeConfidence.toFloat()).toDouble(),
+            adaptiveMaxTailProbability = plain.getFloat("st_adapt_tail", d.adaptiveMaxTailProbability.toFloat()).toDouble(),
         )
     }
 

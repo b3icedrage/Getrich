@@ -715,6 +715,7 @@ fun LogScreen(engine: TradingEngine) {
 // ---------------------------------------------------------------- Account
 @Composable
 fun AccountScreen(engine: TradingEngine, onWebLogin: () -> Unit, onMessage: (String) -> Unit) {
+    val context = LocalContext.current
     val sessions by engine.sessions.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     var paste by remember { mutableStateOf("") }
