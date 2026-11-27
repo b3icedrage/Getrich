@@ -98,7 +98,7 @@ class SecureStore(context: Context) {
             adxRange = plain.getFloat("st_adx_r", d.adxRange.toFloat()).toDouble(),
             volumeMult = plain.getFloat("st_vol", d.volumeMult.toFloat()).toDouble(),
             requireVolume = plain.getBoolean("st_req_vol", d.requireVolume),
-            minPayout = plain.getInt("st_min_pay", d.minPayout),
+            minPayout = plain.getInt("st_min_pay", d.minPayout).coerceIn(70, 100),
             pullbackEma = plain.getInt("st_pull_ema", d.pullbackEma),
             pullbackLookback = plain.getInt("st_pull_lb", d.pullbackLookback),
             macdFast = plain.getInt("st_macd_fast", d.macdFast),
