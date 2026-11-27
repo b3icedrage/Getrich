@@ -15,6 +15,7 @@ import com.pockettrader.app.protocol.TradeOutcome
 import com.pockettrader.app.protocol.settle
 import com.pockettrader.app.signals.Signal
 import com.pockettrader.app.signals.SignalEngine
+import com.pockettrader.app.signals.Strategies
 import com.pockettrader.app.signals.StrategyConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -226,6 +227,37 @@ class TradingEngine(context: Context) {
         val sig = synchronized(lock) { signalEngine.onClock(sym, client.serverNowSec(), System.currentTimeMillis()) }
         sig?.let { onSignal(it) }
         expireStaleTrades()
+    }
+
+    /** Manual signal generation independent of Auto Trader's candle-close listener. */
+    fun generateSignalForSelectedAsset(): Signal? {
+        if (connState.value != ConnState.CONNECTED) return null
+        val cfg = _strategy.value
+        val sym = _asset.value
+        val result = synchronized(lock) {
+            val ltfCandles = signalEngine.ltf.candles
+            val htfCandles = signalEngine.htf.candles + listOfNotNull(signalEngine.htf.forming)
+            val decision = Strategies.evaluate(cfg, ltfCandles, htfCandles) ?: return@synchronized null
+            Signal(
+                id = System.currentTimeMillis(),
+                asset = sym,
+                direction = decision.direction,
+                strategy = decision.strategy,
+                reason = decision.reason,
+                entryAtSec = client.serverNowSec().toLong(),
+                expirySec = cfg.expirySec,
+                emittedAtMs = System.currentTimeMillis()
+            )
+        } ?: return null
+        _signals.update { (listOf(result) + it).take(100) }
+        log("Manual signal generated: ${result.direction.label} ${result.asset} (${result.strategy.label})")
+        return result
+    }
+
+    /** Uses the existing authenticated order route for the generated signal. */
+    fun placeSignalTrade(signal: Signal, amount: Double): String? {
+        if (signal.asset != _asset.value) return "Selected pair changed. Generate a new signal for the current pair."
+        return place(signal.asset, amount, signal.direction, signal.expirySec, TradeSource.MANUAL, signal.id)
     }
 
     // ---------------- signals & autotrader ----------------
