@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -478,6 +479,9 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     val account by engine.account.collectAsStateWithLifecycle()
     val conn by engine.connState.collectAsStateWithLifecycle()
     val cfg by engine.strategy.collectAsStateWithLifecycle()
+    val aiConfigured by engine.aiConfigured.collectAsStateWithLifecycle()
+    val aiStatus by engine.aiStatus.collectAsStateWithLifecycle()
+    var nvidiaKey by rememberSaveable { mutableStateOf("") }
     var confirmRealAuto by remember { mutableStateOf(false) }
     if (confirmRealAuto) {
         AlertDialog(onDismissRequest = { confirmRealAuto = false },
@@ -487,6 +491,29 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } })
     }
     Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
+        Text("NVIDIA AI ENGINE", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text("Model: nvidia/nemotron-3.5-lightning-30b-a3b", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (aiConfigured) aiStatus else "Add an NVIDIA API key to enable AI Auto Trade.", fontSize = 12.sp,
+            color = if (aiConfigured) Green else MaterialTheme.colorScheme.error)
+        OutlinedTextField(
+            value = nvidiaKey,
+            onValueChange = { nvidiaKey = it },
+            label = { Text("NVIDIA API key") },
+            placeholder = { Text("nvapi-…") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = {
+                val result = engine.saveNvidiaApiKey(nvidiaKey)
+                if (result == null) nvidiaKey = "" else onMessage(result)
+            }, enabled = nvidiaKey.isNotBlank()) { Text("Save API key") }
+            if (aiConfigured) OutlinedButton(onClick = { engine.clearNvidiaApiKey() }) { Text("Remove key") }
+        }
+        Text("The key is encrypted on this device. Every auto signal is sent to NVIDIA for a BUY / SELL / NO TRADE decision. API errors, low confidence and unclear setups are skipped.", fontSize = 11.sp, color = Color.Gray)
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("Autotrader executes signals from: ${cfg.type.label}", fontWeight = FontWeight.Bold)
         Text("Status: $status")
         Text("Session trades ${rs.sessionTrades}/${risk.maxTradesPerSession} · Today P/L ${"%+.2f".format(rs.dailyPnl)} · Loss streak ${rs.consecutiveLosses} · Open ${rs.openTrades}", fontSize = 13.sp)
@@ -495,6 +522,7 @@ fun AutoScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             Button(onClick = {
                 when {
                     conn != ConnState.CONNECTED -> onMessage("Connect first (Trade tab).")
+                    !aiConfigured -> onMessage("Save your NVIDIA API key first to enable Nemotron AI Auto Trade.")
                     account == AccountType.REAL -> confirmRealAuto = true
                     else -> engine.setAuto(true)
                 }
