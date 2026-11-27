@@ -339,13 +339,14 @@ fun SignalsScreen(engine: TradingEngine) {
                 }
                 Text("${cfg.type.label} · ${expiryLabel(cfg.timeframeSec)} candles · ${expiryLabel(cfg.expirySec)} expiry", color = Color(0xFFB8C8DA), fontSize = 13.sp)
                 Text("Candles ready: ${counts.first} signal / ${counts.second} trend", color = Color(0xFF91A8C5), fontSize = 12.sp)
+                Text("LIVE DATA: Pocket Option online price ticks + broker candle history. Signals are blocked if the latest tick is older than 15 seconds.", color = Color(0xFF58E0C4), fontSize = 11.sp)
                 Button(onClick = {
                     generated = null
                     feedback = null
                     val result = engine.generateSignalForSelectedAsset()
                     if (result != null) generated = result
                     else feedback = if (conn != ConnState.CONNECTED) "Connect to the market first."
-                        else "No valid setup yet. Wait for more closed candles or review strategy settings."
+                        else "No signal: the live feed may be stale, candle history may be incomplete, or strategies do not agree. Wait for fresh ticks and more candles."
                 }, enabled = conn == ConnState.CONNECTED,
                     modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(15.dp)) {
                     Icon(Icons.Default.ShowChart, null)
