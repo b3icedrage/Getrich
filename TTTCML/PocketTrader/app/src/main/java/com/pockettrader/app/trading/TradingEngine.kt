@@ -75,6 +75,8 @@ class TradingEngine(context: Context) {
     private val _asset = MutableStateFlow(store.lastAsset); val selectedAsset: StateFlow<String> = _asset
     private val _price = MutableStateFlow<Double?>(null); val price: StateFlow<Double?> = _price
     private val _signals = MutableStateFlow<List<Signal>>(emptyList()); val signals: StateFlow<List<Signal>> = _signals
+    private val _pendingSignal = MutableStateFlow<Signal?>(null); val pendingSignal: StateFlow<Signal?> = _pendingSignal
+    private val _minConfluence = MutableStateFlow(store.loadMinConfluence()); val minConfluence: StateFlow<Int> = _minConfluence
     private val _trades = MutableStateFlow<List<TradeRecord>>(emptyList()); val trades: StateFlow<List<TradeRecord>> = _trades
     private val _logs = MutableStateFlow<List<LogLine>>(emptyList()); val logs: StateFlow<List<LogLine>> = _logs
     private val _strategy = MutableStateFlow(store.loadStrategy()); val strategy: StateFlow<StrategyConfig> = _strategy
@@ -94,6 +96,7 @@ class TradingEngine(context: Context) {
     private val _autoStatus = MutableStateFlow("Off"); val autoStatus: StateFlow<String> = _autoStatus
     private val _sessions = MutableStateFlow(sessionFlags()); val sessions: StateFlow<Pair<Boolean, Boolean>> = _sessions
     private val signalEngine = SignalEngine(_strategy.value)
+    init { signalEngine.minConfluenceScore = _minConfluence.value }
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
     private val _lastTickAtMs = MutableStateFlow(0L)
     val lastTickAtMs: StateFlow<Long> = _lastTickAtMs
@@ -408,9 +411,15 @@ class TradingEngine(context: Context) {
             val ltfCandles = signalEngine.ltf.candles
             val htfCandles = signalEngine.htf.candles + listOfNotNull(signalEngine.htf.forming)
             val decision = Strategies.consensus(cfg, ltfCandles, htfCandles) ?: return@synchronized null
+            val confluence = com.pockettrader.app.signals.IndicatorConfluence.analyze(
+                ltfCandles, htfCandles, minScore = _minConfluence.value
+            )
+            if (confluence.recommendation != decision.direction) {
+                log("Manual signal blocked: indicator confluence below ${_minConfluence.value}% or directional edge insufficient")
+                return@synchronized null
+            }
             val technical = analyseTechnicalMarket(ltfCandles)
-            if (technical.direction != decision.direction) {
-                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
+            if (technical.direction != decision.direction) {                log("Manual signal blocked: technical indicators do not confirm the consensus direction (${technical.label})")
                 return@synchronized null
             }
             Signal(
@@ -418,7 +427,7 @@ class TradingEngine(context: Context) {
                 asset = sym,
                 direction = decision.direction,
                 strategy = decision.strategy,
-                reason = decision.reason,
+                reason = "${decision.reason} | ${confluence.summary} | CALL ${confluence.callScore}/100, PUT ${confluence.putScore}/100",
                 entryAtSec = client.serverNowSec().toLong(),
                 expirySec = cfg.expirySec,
                 emittedAtMs = System.currentTimeMillis()
@@ -426,6 +435,22 @@ class TradingEngine(context: Context) {
         } ?: return null
         _signals.update { (listOf(result) + it).take(100) }
         log("Manual signal generated: ${result.direction.label} ${result.asset} (${result.strategy.label})")
+        return result
+    }
+
+    fun setMinConfluence(value: Int) {
+        val selected = value.takeIf { it in listOf(40, 50, 60, 70, 80, 90) } ?: 80
+        _minConfluence.value = selected
+        store.saveMinConfluence(selected)
+        synchronized(lock) { signalEngine.minConfluenceScore = selected }
+        log("Minimum signal confluence set to $selected%")
+    }
+
+    /** Accept the latest live-feed signal only after an explicit user tap. */
+    fun acceptPendingSignal(signal: Signal, amount: Double): String? {
+        if (_pendingSignal.value?.id != signal.id) return "This signal is no longer pending. Wait for the latest signal."
+        val result = placeSignalTrade(signal, amount)
+        if (result == null) _pendingSignal.value = null
         return result
     }
 
@@ -446,8 +471,12 @@ class TradingEngine(context: Context) {
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}): ${sig.reason}")
-        if (_auto.value) autoExecute(sig)
-    }
+        if (_auto.value) {
+            _pendingSignal.value = null
+            autoExecute(sig)
+        } else {
+            _pendingSignal.value = sig
+        }    }
 
     fun setAuto(on: Boolean, reason: String? = null) {
         if (on && connState.value != ConnState.CONNECTED) {
