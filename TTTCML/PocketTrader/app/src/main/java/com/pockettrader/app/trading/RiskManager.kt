@@ -6,6 +6,9 @@ data class RiskConfig(
     val stakePercent: Double = 1.0,
     /** Do not auto-trade when the percentage amount is below this broker minimum. */
     val minimumStake: Double = 1.0,
+    /** Allowed local-device trading window; end hour is exclusive. */
+    val sessionStartHour: Int = 7,
+    val sessionEndHour: Int = 22,
     val maxTradesPerSession: Int = 10,
     /** Stop for the day once net P/L <= -dailyStopLoss (account currency). 0 = off. */
     val dailyStopLoss: Double = 10.0,
