@@ -177,7 +177,6 @@ class TradingEngine(context: Context) {
                             model = runCatching { TradingModel.valueOf(row.tradingModel) }.getOrDefault(TradingModel.CLASSIC),
                             signalId = row.signalId, placedAtMs = row.submittedAt,
                             status = TradeStatus.valueOf(row.executionStatus),
-                            model = runCatching { TradingModel.valueOf(row.tradingModel) }.getOrDefault(TradingModel.CLASSIC),
                             netProfit = row.profitLossMinor?.div(100.0), entryPrice = row.entryPrice
                         )
                     }.getOrNull()
