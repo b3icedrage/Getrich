@@ -7,6 +7,10 @@ import com.pockettrader.app.data.SecureStore
 import com.pockettrader.app.data.PocketTraderDatabase
 import com.pockettrader.app.data.SignalEntity
 import com.pockettrader.app.data.SignalComponentEntity
+import com.pockettrader.app.data.ValidationLogEntity
+import com.pockettrader.app.data.ExecutedOrderEntity
+import com.pockettrader.app.data.RiskStateEntity
+import com.pockettrader.app.data.PerformanceAnalyticsEntity
 import com.pockettrader.app.protocol.Candle
 import com.pockettrader.app.analytics.analyseTechnicalMarket
 import org.json.JSONObject
@@ -37,6 +41,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Calendar
 import java.util.Locale
+import java.util.UUID
+import kotlin.math.roundToLong
 
 enum class AccountType { DEMO, REAL }
 enum class TradeSource { MANUAL, AUTO, TT }
@@ -169,6 +175,109 @@ class TradingEngine(context: Context) {
 
     private fun dayKey(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
+    private fun persistValidation(asset: String, amount: Double, expirySec: Int, signalId: Long?, error: String?) {
+        val quoteAt = synchronized(lock) { marketTickAtMs[asset] ?: 0L }
+        val quote = if (asset == _asset.value) _price.value else null
+        val payout = _assets.value.firstOrNull { it.symbol == asset }?.payout?.toDouble()
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                database.dao().insertValidationLog(ValidationLogEntity(
+                    validationId = UUID.randomUUID().toString(), signalId = signalId, asset = asset,
+                    accountMode = _account.value.name, quotePrice = quote,
+                    quoteTimestamp = quoteAt.takeIf { it > 0L }, payout = payout, expirySeconds = expirySec,
+                    riskAmountMinor = (amount * 100.0).roundToLong(),
+                    validationStatus = if (error == null) "VALID" else "REJECTED",
+                    rejectionReason = error, createdAt = System.currentTimeMillis()
+                ))
+            }.onFailure { log("Database validation write failed: " + (it.message ?: "unknown")) }
+        }
+    }
+
+    private fun persistTrade(record: TradeRecord, exitPrice: Double? = null) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                database.dao().upsertOrder(ExecutedOrderEntity(
+                    orderId = record.requestId, signalId = record.signalId, brokerOrderId = record.dealId,
+                    asset = record.asset, direction = record.direction.name,
+                    accountMode = if (record.isDemo) AccountType.DEMO.name else AccountType.REAL.name,
+                    stakeMinor = (record.amount * 100.0).roundToLong(), entryPrice = record.entryPrice,
+                    exitPrice = exitPrice, payout = _assets.value.firstOrNull { it.symbol == record.asset }?.payout?.toDouble(),
+                    expirySeconds = record.expirySec, executionStatus = record.status.name,
+                    outcome = record.status.takeIf { it == TradeStatus.WIN || it == TradeStatus.LOSS || it == TradeStatus.DRAW }?.name,
+                    profitLossMinor = record.netProfit?.let { (it * 100.0).roundToLong() },
+                    submittedAt = record.placedAtMs,
+                    closedAt = if (record.status in listOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW, TradeStatus.FAILED, TradeStatus.UNKNOWN)) System.currentTimeMillis() else null
+                ))
+            }.onFailure { log("Database order write failed: " + (it.message ?: "unknown")) }
+        }
+    }
+
+    private fun persistRiskState(account: AccountType, state: RiskState, config: RiskConfig) {
+        val pnlMinor = (state.dailyPnl * 100.0).roundToLong()
+        val reason = riskManagers[account]?.blockReason(dayKey())
+        val label = when {
+            reason != null -> "RISK_LOCKED"
+            state.openTrades > 0 -> "ACTIVE_TRADE"
+            else -> "IDLE"
+        }
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                database.dao().upsertRiskState(RiskStateEntity(
+                    accountMode = account.name, dayKey = state.dayKey, state = label,
+                    dailyLossMinor = (-pnlMinor).coerceAtLeast(0L), dailyProfitMinor = pnlMinor.coerceAtLeast(0L),
+                    consecutiveLosses = state.consecutiveLosses, tradesToday = state.sessionTrades,
+                    openTrades = state.openTrades, maximumDailyLossMinor = (config.dailyStopLoss * 100.0).roundToLong(),
+                    maximumDailyTrades = config.maxTradesPerSession, updatedAt = System.currentTimeMillis()
+                ))
+            }.onFailure { log("Database risk-state write failed: " + (it.message ?: "unknown")) }
+        }
+    }
+
+    private fun persistSignalCount(signal: Signal) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = database.dao()
+                val accountMode = _account.value.name
+                val key = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(signal.emittedAtMs))
+                val existing = dao.performance(key, signal.strategy.name, accountMode, signal.asset)
+                val count = (existing?.totalSignals ?: 0) + 1
+                val avg = if (existing == null) signal.confluenceScore.toDouble()
+                    else ((existing.averageConfluence ?: 0.0) * existing.totalSignals + signal.confluenceScore) / count
+                dao.upsertPerformance(existing?.copy(totalSignals = count, averageConfluence = avg)
+                    ?: PerformanceAnalyticsEntity(dateKey = key, strategyVersion = signal.strategy.name,
+                        accountMode = accountMode, asset = signal.asset, totalSignals = 1,
+                        executedTrades = 0, winningTrades = 0, losingTrades = 0,
+                        totalProfitLossMinor = 0L, averageConfluence = avg))
+            }.onFailure { log("Database analytics write failed: " + (it.message ?: "unknown")) }
+        }
+    }
+
+    private fun persistTradeOutcome(record: TradeRecord) {
+        val key = dayKey()
+        val accountMode = if (record.isDemo) AccountType.DEMO.name else AccountType.REAL.name
+        val strategyVersion = _strategy.value.type.name
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = database.dao()
+                val existing = dao.performance(key, strategyVersion, accountMode, record.asset)
+                val won = record.status == TradeStatus.WIN
+                val lost = record.status == TradeStatus.LOSS || record.status == TradeStatus.UNKNOWN
+                dao.upsertPerformance(existing?.copy(
+                    executedTrades = existing.executedTrades + 1,
+                    winningTrades = existing.winningTrades + if (won) 1 else 0,
+                    losingTrades = existing.losingTrades + if (lost) 1 else 0,
+                    totalProfitLossMinor = existing.totalProfitLossMinor + ((record.netProfit ?: -record.amount) * 100.0).roundToLong()
+                ) ?: PerformanceAnalyticsEntity(
+                    dateKey = key, strategyVersion = strategyVersion, accountMode = accountMode,
+                    asset = record.asset, totalSignals = 0, executedTrades = 1,
+                    winningTrades = if (won) 1 else 0, losingTrades = if (lost) 1 else 0,
+                    totalProfitLossMinor = ((record.netProfit ?: -record.amount) * 100.0).roundToLong(),
+                    averageConfluence = null
+                ))
+            }.onFailure { log("Database outcome analytics write failed: " + (it.message ?: "unknown")) }
+        }
+    }
+
     private fun isCryptoAsset(asset: Asset): Boolean {
         val type = asset.type.lowercase(Locale.US)
         if (type.contains("crypto") || type.contains("cryptocurrency")) return true
@@ -194,6 +303,7 @@ class TradingEngine(context: Context) {
                         direction = signal.direction.name, rawScore = signal.confluenceScore.toDouble(),
                         maximumScore = 100.0, explanation = signal.reason)
                 ))
+                persistSignalCount(signal)
             }.onFailure { log("Database signal write failed: " + (it.message ?: "unknown")) }
         }
     }
@@ -297,9 +407,15 @@ class TradingEngine(context: Context) {
     fun updateRisk(r: RiskConfig) {
         _risk.value = r; store.saveRisk(r)
         riskManagers.values.forEach { it.config = r }; _riskState.value = riskManager.state
+        riskManagers.forEach { (account, manager) -> persistRiskState(account, manager.state, manager.config) }
     }
 
-    fun resetSession() { riskManager.resetSession(); _riskState.value = riskManager.state; log("Autotrader session counters reset") }
+    fun resetSession() {
+        riskManager.resetSession()
+        _riskState.value = riskManager.state
+        persistRiskState(_account.value, riskManager.state, riskManager.config)
+        log("Autotrader session counters reset")
+    }
 
     fun saveNvidiaApiKey(key: String): String? {
         val cleaned = key.trim()
@@ -863,6 +979,7 @@ class TradingEngine(context: Context) {
         // this reservation, two simultaneous signals can both pass maxOpenTrades=1.
         val reservationError = synchronized(lock) {
             val invalid = validateOrder(asset, amount, direction, expirySec, signalId)
+            persistValidation(asset, amount, expirySec, signalId, invalid)
             if (invalid != null) invalid
             else if (signalId != null && claimedSignalIds.contains(signalId))
                 "This signal has already been submitted. Duplicate order blocked."
@@ -889,6 +1006,7 @@ class TradingEngine(context: Context) {
         }
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt)
         _trades.update { (listOf(rec) + it).take(500) }
+        persistTrade(rec)
         if (signalId != null) updateSignalAudit(signalId) {
             it.copy(expiryAtMs = sentAt + expirySec * 1000L, brokerResult = TradeStatus.PENDING, tradeRequestId = id)
         }
@@ -912,6 +1030,7 @@ class TradingEngine(context: Context) {
             it.copy(dealId = d.id, status = TradeStatus.OPEN, entryPrice = d.openPrice)
         }
         if (r != null) {
+            persistTrade(r)
             if (r.signalId != null) updateSignalAudit(r.signalId) {
                 it.copy(entryPrice = d.openPrice ?: it.emittedPrice, brokerResult = TradeStatus.OPEN)
             }
@@ -925,9 +1044,11 @@ class TradingEngine(context: Context) {
         }
         log("Order rejected: $error")
         if (r != null) {
+            persistTrade(r)
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onRejected()
             if (r.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
+            persistRiskState(if (r.isDemo) AccountType.DEMO else AccountType.REAL, manager.state, manager.config)
         }
     }
 
@@ -937,6 +1058,8 @@ class TradingEngine(context: Context) {
         val r = updateTrade({ it.dealId == d.id && (it.status == TradeStatus.OPEN || it.status == TradeStatus.PENDING) }) {
             it.copy(status = status, netProfit = net)
         } ?: return
+        persistTrade(r, d.closePrice)
+        persistTradeOutcome(r)
         if (r.signalId != null) updateSignalAudit(r.signalId) {
             it.copy(entryPrice = d.openPrice ?: it.entryPrice, brokerResult = status, netReturn = net)
         }
@@ -946,6 +1069,7 @@ class TradingEngine(context: Context) {
         val isActiveAccount = r.isDemo == (_account.value == AccountType.DEMO)
             val manager = riskManagers.getValue(if (r.isDemo) AccountType.DEMO else AccountType.REAL)
             manager.onClosed(net, dayKey())
+            persistRiskState(if (r.isDemo) AccountType.DEMO else AccountType.REAL, manager.state, manager.config)
             if (isActiveAccount) {
                 _riskState.value = manager.state
                 if (_auto.value) manager.blockReason(dayKey())?.takeIf { riskLimitHit(it) }?.let { setAuto(false, it) }
@@ -962,6 +1086,8 @@ class TradingEngine(context: Context) {
             if (t.signalId != null) updateSignalAudit(t.signalId) { it.copy(brokerResult = TradeStatus.UNKNOWN, netReturn = -t.amount) }
             val manager = riskManagers.getValue(if (t.isDemo) AccountType.DEMO else AccountType.REAL)
                 manager.onClosed(-t.amount, dayKey())
+            persistRiskState(if (t.isDemo) AccountType.DEMO else AccountType.REAL, manager.state, manager.config)
+            _trades.value.firstOrNull { it.requestId == t.requestId }?.let { persistTrade(it); persistTradeOutcome(it) }
             if (t.isDemo == (_account.value == AccountType.DEMO)) _riskState.value = manager.state
         }
     }
