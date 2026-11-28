@@ -19,6 +19,7 @@ data class Signal(
     val confluenceScore: Int = 0,
     /** Broker price at signal emission; informational until an order is accepted. */
     val referencePrice: Double? = null,
+    val scoreBreakdown: Map<String, Int> = emptyMap(),
 )
 
 /**
@@ -105,7 +106,8 @@ class SignalEngine(cfg: StrategyConfig) {
         val score = if (direction == Direction.CALL) scoreReport.callScore else scoreReport.putScore
         val otherScore = if (direction == Direction.CALL) scoreReport.putScore else scoreReport.callScore
         val reason = "MTF weighted score: ${scoreReport.explanation} | CALL ${scoreReport.callScore}/100, PUT ${scoreReport.putScore}/100 | directional edge ${kotlin.math.abs(score - otherScore)}$cryptoNote"
+        val breakdown = if (direction == Direction.CALL) scoreReport.callBreakdown else scoreReport.putBreakdown
         return Signal(nowMs * 1000L + globalSignalIds.getAndIncrement().mod(1000L), asset, direction, config.type, reason,
-            closed.startSec + 60, config.expirySec, nowMs, score, closed.close)
+            closed.startSec + 60, config.expirySec, nowMs, score, closed.close, breakdown)
     }
 }
