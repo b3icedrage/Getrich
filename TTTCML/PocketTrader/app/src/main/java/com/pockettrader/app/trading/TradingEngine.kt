@@ -333,11 +333,12 @@ class TradingEngine(context: Context) {
                     accountMode = _account.value.name, status = "GENERATED", createdAt = signal.emittedAtMs,
                     expiresAt = (signal.entryAtSec + signal.expirySec) * 1000L
                 ))
-                dao.upsertSignalComponents(listOf(
-                    SignalComponentEntity(signalId = signal.id, component = "MTF_TOTAL",
-                        direction = signal.direction.name, rawScore = signal.confluenceScore.toDouble(),
-                        maximumScore = 100.0, explanation = signal.reason)
-                ))
+                val maximums = if (signal.reason.contains("Crypto")) mapOf("H1" to 17.0, "M30" to 13.0, "M5" to 22.0, "M1" to 33.0, "CRYPTO_VWAP_ATR" to 15.0)
+                    else mapOf("H1" to 20.0, "M30" to 15.0, "M5" to 25.0, "M1" to 40.0)
+                dao.upsertSignalComponents(signal.scoreBreakdown.map { (name, points) ->
+                    SignalComponentEntity(signalId = signal.id, component = name, direction = signal.direction.name,
+                        rawScore = points.toDouble(), maximumScore = maximums[name] ?: 100.0, explanation = null)
+                })
                 persistSignalCount(signal)
             }.onFailure { log("Database signal write failed: " + (it.message ?: "unknown")) }
         }
@@ -1014,20 +1015,18 @@ class TradingEngine(context: Context) {
         // this reservation, two simultaneous signals can both pass maxOpenTrades=1.
         val reservationError = synchronized(lock) {
             val invalid = validateOrder(asset, amount, direction, expirySec, signalId)
-            persistValidation(asset, amount, expirySec, signalId, invalid)
-            if (invalid != null) invalid
-            else if (signalId != null && claimedSignalIds.contains(signalId))
-                "This signal has already been submitted. Duplicate order blocked."
+            val duplicate = if (invalid == null && signalId != null && claimedSignalIds.contains(signalId))
+                "This signal has already been submitted. Duplicate order blocked." else null
+            val blocked = if (invalid == null && duplicate == null) riskManager.reserveOpen(dayKey()) else null
+            val failure = invalid ?: duplicate ?: blocked
+            persistValidation(asset, amount, expirySec, signalId, failure)
+            if (failure != null) failure
             else {
-                val blocked = riskManager.reserveOpen(dayKey())
-                if (blocked != null) blocked
-                else {
-                    if (signalId != null) {
-                        claimedSignalIds.add(signalId)
-                        while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
-                    }
-                    null
+                if (signalId != null) {
+                    claimedSignalIds.add(signalId)
+                    while (claimedSignalIds.size > 2000) claimedSignalIds.remove(claimedSignalIds.first())
                 }
+                null
             }
         }
         if (reservationError != null) return reservationError
