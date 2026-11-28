@@ -44,6 +44,8 @@ class SignalEngine(cfg: StrategyConfig) {
     var h1 = CandleAggregator(3600)
         private set
     var isCryptoAsset: Boolean = false
+    /** When enabled, this scanner emits only the Model 3 Donchian/AC/AO setup. */
+    var donchianMomentumMode: Boolean = false
     private var lastEvaluated = Long.MIN_VALUE
     private companion object { val globalSignalIds = AtomicLong(1L) }
 
@@ -90,6 +92,12 @@ class SignalEngine(cfg: StrategyConfig) {
         val m1Candles = m1.candles
         val m5Candles = m5.candles
         val m30Candles = m30.candles
+        if (donchianMomentumMode) {
+            val decision = Strategies.donchianMomentum(m1Candles) ?: return null
+            return Signal(nowMs * 1000L + globalSignalIds.getAndIncrement().mod(1000L), asset, decision.direction,
+                StrategyType.DONCHIAN_MOMENTUM, decision.reason, closed.startSec + 60, config.expirySec,
+                nowMs, 100, closed.close, mapOf("Donchian breakout" to 25, "AC aligned" to 25, "AC accelerating" to 25, "AO aligned and rising" to 25))
+        }
         // TT is a market-wide indicator scanner, not a filter on the currently
         // selected strategy's rare entry triggers. Evaluate every closed candle and
         // publish a directional confluence candidate whenever it clears the watch
