@@ -44,6 +44,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToLong
 
+enum class TradingModel { CLASSIC, FOUR_AGENT }
 enum class AccountType { DEMO, REAL }
 enum class TradeSource { MANUAL, AUTO, TT }
 enum class TradeStatus { PENDING, OPEN, WIN, LOSS, DRAW, FAILED, UNKNOWN }
@@ -94,6 +95,10 @@ class TradingEngine(context: Context) {
     @Volatile private var backgroundReconnectEnabled = false
     @Volatile private var restoreAutoAfterBackgroundRestart = false
     private val backgroundPrefs by lazy { app.getSharedPreferences("pockettrader_background", Context.MODE_PRIVATE) }
+    private val modelPrefs by lazy { app.getSharedPreferences("pockettrader_models", Context.MODE_PRIVATE) }
+    private val _model = MutableStateFlow(runCatching { TradingModel.valueOf(modelPrefs.getString("active_model", TradingModel.CLASSIC.name) ?: TradingModel.CLASSIC.name) }.getOrDefault(TradingModel.CLASSIC))
+    val model: StateFlow<TradingModel> = _model
+    private var classicStakePercent: Double = modelPrefs.getFloat("classic_stake_percent", 1.0f).toDouble()
 
     val connState: StateFlow<ConnState> = client.state
     private val _account = MutableStateFlow(AccountType.DEMO)   // always start on demo
@@ -467,9 +472,32 @@ class TradingEngine(context: Context) {
     }
 
     fun updateRisk(r: RiskConfig) {
-        _risk.value = r; store.saveRisk(r)
-        riskManagers.values.forEach { it.config = r }; _riskState.value = riskManager.state
+        val safe = if (_model.value == TradingModel.FOUR_AGENT) r.copy(stakePercent = 3.0) else r
+        _risk.value = safe; store.saveRisk(safe)
+        riskManagers.values.forEach { it.config = safe }; _riskState.value = riskManager.state
         riskManagers.forEach { (account, manager) -> persistRiskState(account, manager.state, manager.config) }
+    }
+
+    /** Switches operating profiles while preserving the existing Classic settings. */
+    fun switchModel(model: TradingModel): String? {
+        if (model == _model.value) return null
+        if (_auto.value) setAuto(false, "Trading model changed")
+        if (_model.value == TradingModel.CLASSIC) {
+            classicStakePercent = _risk.value.stakePercent
+            modelPrefs.edit().putFloat("classic_stake_percent", classicStakePercent.toFloat()).apply()
+        }
+        val nextRisk = when (model) {
+            TradingModel.CLASSIC -> _risk.value.copy(stakePercent = classicStakePercent.coerceIn(0.1, 5.0))
+            TradingModel.FOUR_AGENT -> _risk.value.copy(stakePercent = 3.0)
+        }
+        _model.value = model
+        modelPrefs.edit().putString("active_model", model.name).apply()
+        _risk.value = nextRisk
+        store.saveRisk(nextRisk)
+        riskManagers.values.forEach { it.config = nextRisk }
+        _riskState.value = riskManager.state
+        log(if (model == TradingModel.FOUR_AGENT) "Model 2 activated: Scanner → Opportunity Analyst → 3% Risk Manager → Auto Execution" else "Model 1 Classic activated: existing strategy and risk settings restored")
+        return if (model == TradingModel.FOUR_AGENT) "Model 2 is active. Enable Auto Trader to allow Agent 4 to execute after Agent 3 approval. Every stake is capped at 3% of the current balance." else "Model 1 Classic is active. Your previous Classic risk percentage was restored."
     }
 
     fun resetSession() {
@@ -886,6 +914,22 @@ class TradingEngine(context: Context) {
         _signals.update { (listOf(sig) + it).take(100) }
         Notifier.signal(app, sig)
         log("Signal ${sig.direction.label} ${sig.asset} (${sig.strategy.label}) at ${sig.confluenceScore}% confluence: ${sig.reason}")
+        // Model 2 Agent 2 ranks fresh scanner candidates. This is deterministic
+        // technical scoring, not an AI-estimated win probability.
+        if (_model.value == TradingModel.FOUR_AGENT) {
+            val now = System.currentTimeMillis()
+            val best = _signals.value.asSequence()
+                .filter { now - it.emittedAtMs in 0..MAX_TT_SIGNAL_AGE_MS && it.confluenceScore >= _minConfluence.value }
+                .sortedWith(compareByDescending<Signal> { it.confluenceScore }
+                    .thenByDescending { _assets.value.firstOrNull { a -> a.symbol == it.asset }?.payout ?: 0 }
+                    .thenByDescending { it.emittedAtMs })
+                .firstOrNull()
+            if (best?.id != sig.id) {
+                log("Agent 2: ${sig.asset} ranked below the strongest fresh opportunity; no execution")
+                return
+            }
+            log("Agent 2 selected top-ranked opportunity: ${sig.asset} ${sig.direction.label}")
+        }
         if (_auto.value) {
             // Auto mode follows every eligible market-wide TT signal, not only the
             // chart-selected pair. Submit immediately from the live tick event path.
@@ -929,6 +973,11 @@ class TradingEngine(context: Context) {
 
     private fun autoBlockReason(sig: Signal): String? {
         val cfg = _strategy.value
+        if (_model.value == TradingModel.FOUR_AGENT) {
+            val balance = _balance.value ?: return "Agent 3 blocked: account balance unavailable"
+            val stake = calculatedAutoStake() ?: return "Agent 3 blocked: 3% stake is below broker minimum"
+            if (stake > balance * 0.03 + 1e-8) return "Agent 3 blocked: stake exceeds the 3% account cap"
+        }
         val payout = _assets.value.firstOrNull { it.symbol == sig.asset }?.payout
         return when {
             connState.value != ConnState.CONNECTED -> "not connected"
@@ -959,6 +1008,7 @@ class TradingEngine(context: Context) {
             log("Autotrader skipped signal #${sig.id}: ${autoStakeBlockMessage()}")
             return
         }
+        // Model 2 Agent 4 submits only after Agent 3 has approved the order.
         val err = place(sig.asset, stake, sig.direction, sig.expirySec, TradeSource.AUTO, sig.id)
         if (err != null) {
             _autoStatus.value = "Order failed: $err"
@@ -983,14 +1033,16 @@ class TradingEngine(context: Context) {
     private fun calculatedAutoStake(): Double? {
         val currentBalance = _balance.value ?: return null
         if (!currentBalance.isFinite() || currentBalance <= 0.0) return null
-        val amount = currentBalance * (_risk.value.stakePercent / 100.0)
+        val percent = if (_model.value == TradingModel.FOUR_AGENT) 3.0 else _risk.value.stakePercent
+        val amount = currentBalance * (percent / 100.0)
         return amount.takeIf { it.isFinite() && it >= _risk.value.minimumStake }
     }
 
     private fun autoStakeBlockMessage(): String {
         val currentBalance = _balance.value
             ?: return "Waiting for the broker balance before calculating the percentage stake."
-        val amount = currentBalance * (_risk.value.stakePercent / 100.0)
+        val percent = if (_model.value == TradingModel.FOUR_AGENT) 3.0 else _risk.value.stakePercent
+        val amount = currentBalance * (percent / 100.0)
         return if (amount < _risk.value.minimumStake)
             "Calculated ${_risk.value.stakePercent}% stake (${"%.2f".format(amount)}) is below the broker minimum ${"%.2f".format(_risk.value.minimumStake)}; no trade placed."
         else "Could not calculate a valid percentage stake; no trade placed."
@@ -1019,6 +1071,8 @@ class TradingEngine(context: Context) {
         val currentBalance = _balance.value
         if (currentBalance == null || !currentBalance.isFinite() || amount > currentBalance)
             return "A valid broker balance is required and the stake cannot exceed it."
+        if (_model.value == TradingModel.FOUR_AGENT && amount > currentBalance * 0.03 + 1e-8)
+            return "Model 2 Agent 3 rejected this order: stake exceeds the 3% account limit."
         if (expirySec !in 5..3600) return "Expiry must be between 5 and 3600 seconds."
         if (signalId != null) {
             val signal = _signals.value.firstOrNull { it.id == signalId }
