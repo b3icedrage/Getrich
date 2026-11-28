@@ -238,7 +238,11 @@ class TradingEngine(context: Context) {
     private fun requestHistory() {
         val c = _strategy.value
         client.requestHistory(_asset.value, c.timeframeSec, 300)
-        scope.launch { delay(400); client.requestHistory(_asset.value, c.higherTimeframeSec, maxOf(c.htfEmaPeriod + 20, 250)) }
+        scope.launch {
+            delay(250); client.requestHistory(_asset.value, 300, 240)
+            delay(250); client.requestHistory(_asset.value, 1800, 240)
+            delay(250); client.requestHistory(_asset.value, c.higherTimeframeSec, maxOf(c.htfEmaPeriod + 20, 250))
+        }
     }
 
     fun updateStrategy(c: StrategyConfig) {
@@ -421,10 +425,15 @@ class TradingEngine(context: Context) {
                         marketTickAtMs.keys.retainAll(symbols)
                         activeAssets.forEach { asset ->
                             if (!marketEngines.containsKey(asset.symbol)) {
-                                val scanner = SignalEngine(_strategy.value).also { it.minConfluenceScore = _minConfluence.value }
+                                val scanner = SignalEngine(_strategy.value).also {
+                                    it.minConfluenceScore = _minConfluence.value
+                                    it.isCryptoAsset = asset.type.contains("crypto", ignoreCase = true)
+                                }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
                                 client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 240)
+                                client.requestHistory(asset.symbol, 300, 240)
+                                client.requestHistory(asset.symbol, 1800, 240)
                                 client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 240)
                             }
                         }
@@ -468,7 +477,7 @@ class TradingEngine(context: Context) {
                 marketEngines[snap.asset]?.let { if (it !== signalEngine) add(it) }
             }
             targets.forEach { target ->
-                listOf(target.ltf, target.htf).forEach { agg ->
+                listOf(target.ltf, target.htf, target.m5, target.m30).distinctBy { it.periodSec }.forEach { agg ->
                     val candles = snap.candles.takeIf { snap.period == agg.periodSec } ?: emptyList()
                     // Only seed when it adds data; live candles are never thrown away for less history.
                     if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
@@ -480,7 +489,7 @@ class TradingEngine(context: Context) {
                 _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
                 snap.ticks.lastOrNull()?.let { if (_price.value == null) _price.value = it.second }
             }
-            if (c.timeframeSec == snap.period || c.higherTimeframeSec == snap.period)
+            if (c.timeframeSec == snap.period || c.higherTimeframeSec == snap.period || snap.period == 300 || snap.period == 1800)
                 log("History ${snap.asset} ${snap.period}s: ${snap.candles.size} candles, ${snap.ticks.size} ticks")
         }
     }
