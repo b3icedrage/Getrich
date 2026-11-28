@@ -93,21 +93,18 @@ class SignalEngine(cfg: StrategyConfig) {
         // selected strategy's rare entry triggers. Evaluate every closed candle and
         // publish a directional confluence candidate whenever it clears the watch
         // floor and directional edge. TradingEngine applies stricter execution checks.
-        val analysis = IndicatorConfluence.analyze(
-            m1Candles, htfCandles,
+        val scoreReport = MultiTimeframeConfluence.analyze(
+            m1Candles, m5Candles, m30Candles, htfCandles, isCryptoAsset,
             minScore = (minConfluenceScore - 10).coerceAtLeast(40)
         )
-        val direction = analysis.recommendation ?: return null
+        val direction = scoreReport.recommendation ?: return null
         val entryBlock = MultiTimeframeEntryRules.rejection(m1Candles, m5Candles, m30Candles, htfCandles, direction)
         if (entryBlock != null) return null
-        val cryptoNote = if (isCryptoAsset) {
-            val cryptoBlock = CryptoVwapAtrFilter.rejection(m1Candles, direction)
-            if (cryptoBlock != null) return null
-            " | Crypto tick-volume VWAP divergence + 1.5 ATR bands confirmed (VWAP is a proxy, not exchange volume)"
-        } else ""
-        val volatility = analysis.volatilityPct?.let { " · ATR %.3f%%".format(it) } ?: ""
-        val reason = "MTF confirmed: H1 + M30 structure, M5 pullback, M1 trigger | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility$cryptoNote"
-        val score = if (direction == Direction.CALL) analysis.callScore else analysis.putScore
+        if (isCryptoAsset && CryptoVwapAtrFilter.rejection(m1Candles, direction) != null) return null
+        val cryptoNote = if (isCryptoAsset) " | Crypto tick-volume VWAP divergence + 1.5 ATR bands confirmed (proxy volume, not exchange volume)" else ""
+        val score = if (direction == Direction.CALL) scoreReport.callScore else scoreReport.putScore
+        val otherScore = if (direction == Direction.CALL) scoreReport.putScore else scoreReport.callScore
+        val reason = "MTF weighted score: ${scoreReport.explanation} | CALL ${scoreReport.callScore}/100, PUT ${scoreReport.putScore}/100 | directional edge ${kotlin.math.abs(score - otherScore)}$cryptoNote"
         return Signal(nowMs * 1000L + globalSignalIds.getAndIncrement().mod(1000L), asset, direction, config.type, reason,
             closed.startSec + 60, config.expirySec, nowMs, score, closed.close)
     }
