@@ -831,6 +831,42 @@ fun AnalyticsScreen(engine: TradingEngine) {
                 }
             }
         }
+        Text("Model performance · ${account.name}", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Text("Only broker-settled trades are counted. Draws are excluded from win-rate denominator; results are attributed to the model recorded when each order was placed.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TradingModel.values().forEach { modelType ->
+            val modelTrades = closed.filter { it.model == modelType }
+            val decidedTrades = modelTrades.filter { it.status == TradeStatus.WIN || it.status == TradeStatus.LOSS }
+            val modelWins = decidedTrades.count { it.status == TradeStatus.WIN }
+            val grossWins = modelTrades.filter { it.status == TradeStatus.WIN }.sumOf { (it.netProfit ?: 0.0).coerceAtLeast(0.0) }
+            val grossLosses = modelTrades.filter { it.status == TradeStatus.LOSS }.sumOf { kotlin.math.abs((it.netProfit ?: -it.amount).coerceAtMost(0.0)) }
+            val profitFactor = if (grossLosses > 0.0) grossWins / grossLosses else if (grossWins > 0.0) Double.POSITIVE_INFINITY else 0.0
+            var equity = 0.0
+            var peak = 0.0
+            var maxDrawdown = 0.0
+            modelTrades.sortedBy { it.placedAtMs }.forEach { trade ->
+                equity += trade.netProfit ?: if (trade.status == TradeStatus.LOSS) -trade.amount else 0.0
+                peak = maxOf(peak, equity)
+                maxDrawdown = maxOf(maxDrawdown, peak - equity)
+            }
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
+                Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (modelType == TradingModel.CLASSIC) "Model 1 · Classic" else "Model 2 · Four Agents", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("${modelTrades.size} settled", color = Color(0xFFB7C7DA), fontSize = 11.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MetricCard("Win rate", if (decidedTrades.isEmpty()) "—" else "${"%.1f".format(modelWins * 100.0 / decidedTrades.size)}%", Modifier.weight(1f))
+                        MetricCard("Net P/L", "%+.2f".format(modelTrades.sumOf { it.netProfit ?: if (it.status == TradeStatus.LOSS) -it.amount else 0.0 }), Modifier.weight(1f))
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MetricCard("Profit factor", when { profitFactor.isInfinite() -> "∞"; decidedTrades.isEmpty() -> "—"; else -> "%.2f".format(profitFactor) }, Modifier.weight(1f))
+                        MetricCard("Max drawdown", "%.2f".format(maxDrawdown), Modifier.weight(1f))
+                    }
+                    if (modelTrades.isEmpty()) Text("No settled trades attributed to this model yet.", color = Color(0xFFFFC76A), fontSize = 11.sp)
+                }
+            }
+        }
+
         Text("Live price · $asset", fontWeight = FontWeight.Bold)
         if (priceHistory.size > 1) {
             Canvas(Modifier.fillMaxWidth().height(150.dp).background(Color(0xFF101D30), RoundedCornerShape(14.dp)).padding(10.dp)) {
