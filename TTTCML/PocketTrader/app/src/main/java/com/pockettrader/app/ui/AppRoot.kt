@@ -1028,7 +1028,7 @@ fun LogScreen(engine: TradingEngine) {
     val logs by engine.logs.collectAsStateWithLifecycle()
     val journal by engine.signalJournal.collectAsStateWithLifecycle()
     var showEvents by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
         val closed = trades.filter { it.status in setOf(TradeStatus.WIN, TradeStatus.LOSS, TradeStatus.DRAW) }
         val wins = closed.count { it.status == TradeStatus.WIN }
         Text("Trades ${trades.size} · Closed ${closed.size} · Wins $wins · Win rate ${if (closed.isEmpty()) "-" else "${wins * 100 / closed.size}%"} · Net ${"%+.2f".format(closed.sumOf { it.netProfit ?: 0.0 })}")
