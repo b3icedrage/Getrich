@@ -137,6 +137,29 @@ object Indicators {
         return Adx(adx, pdi, mdi)
     }
 
+    /** Accelerator Oscillator: (SMA(fast) - SMA(slow)) minus its signal SMA. Uses candle median price. */
+    fun acceleratorOscillator(h: List<Double>, l: List<Double>, fastPeriod: Int = 15, slowPeriod: Int = 50, signalPeriod: Int = 5): DoubleArray {
+        require(h.size == l.size && fastPeriod > 0 && slowPeriod > 0 && signalPeriod > 0)
+        val median = h.indices.map { (h[it] + l[it]) / 2.0 }
+        val fast = sma(median, fastPeriod); val slow = sma(median, slowPeriod)
+        val ao = DoubleArray(median.size) { i -> if (fast[i].isFinite() && slow[i].isFinite()) fast[i] - slow[i] else Double.NaN }
+        val first = ao.indexOfFirst { it.isFinite() }
+        val signal = DoubleArray(ao.size) { Double.NaN }
+        if (first >= 0) {
+            val smoothed = sma(ao.drop(first), signalPeriod)
+            smoothed.forEachIndexed { i, value -> signal[first + i] = value }
+        }
+        return DoubleArray(ao.size) { i -> if (ao[i].isFinite() && signal[i].isFinite()) ao[i] - signal[i] else Double.NaN }
+    }
+
+    /** Awesome Oscillator using slow/fast parameter order (30,17): SMA(17) - SMA(30). */
+    fun awesomeOscillator(h: List<Double>, l: List<Double>, slowPeriod: Int = 30, fastPeriod: Int = 17): DoubleArray {
+        require(h.size == l.size && slowPeriod > 0 && fastPeriod > 0)
+        val median = h.indices.map { (h[it] + l[it]) / 2.0 }
+        val fast = sma(median, fastPeriod); val slow = sma(median, slowPeriod)
+        return DoubleArray(median.size) { i -> if (fast[i].isFinite() && slow[i].isFinite()) fast[i] - slow[i] else Double.NaN }
+    }
+
     data class Channel(val upper: DoubleArray, val lower: DoubleArray)
 
     /**
