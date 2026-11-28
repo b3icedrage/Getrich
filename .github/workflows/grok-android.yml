@@ -29,7 +29,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
-      - name: Build debug APK
+      - name: Configure persistent signing key
+        env:
+          GROK_KEYSTORE_BASE64: ${{ secrets.GROK_KEYSTORE_BASE64 }}
+          GROK_KEYSTORE_PASSWORD: ${{ secrets.GROK_KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$GROK_KEYSTORE_BASE64" || (echo "Missing GROK_KEYSTORE_BASE64 repository secret"; exit 1)
+          test -n "$GROK_KEYSTORE_PASSWORD" || (echo "Missing GROK_KEYSTORE_PASSWORD repository secret"; exit 1)
+          echo "$GROK_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/grok-upload-key.jks"
+          echo "GROK_KEYSTORE_PATH=$RUNNER_TEMP/grok-upload-key.jks" >> "$GITHUB_ENV"
+          echo "GROK_KEYSTORE_PASSWORD=$GROK_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build signed APK
         working-directory: TTTCML/Grok
         run: gradle assembleDebug
       - name: Upload APK
@@ -38,4 +48,4 @@ jobs:
           name: GROK-debug-apk
           path: TTTCML/Grok/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
