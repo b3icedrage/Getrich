@@ -24,8 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -64,8 +62,6 @@ private data class PendingAction(val action: VisionAction, val screenshot: Bitma
 @Composable
 private fun GrokScreen() {
     val context = LocalContext.current
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val viewportScale = ((screenWidthDp - 20).coerceAtLeast(320)).toFloat() / 1280f
     val webViewState = remember { mutableStateOf<WebView?>(null) }
     val service = remember { NvidiaVisionService() }
     var url by remember { mutableStateOf("https://pocketoption.com/en/cabinet/demo/") }
@@ -274,28 +270,24 @@ private fun GrokScreen() {
             label = { Text("Your chart strategy prompt") }, minLines = 2, maxLines = 4)
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
             Column(modifier = Modifier.padding(8.dp)) {
-                Text("Desktop browser • 1280 × 800 logical chart view", style = MaterialTheme.typography.labelLarge)
+                Text("Browser • full phone width • pinch to zoom", style = MaterialTheme.typography.labelLarge)
                 Box(
-                    modifier = Modifier.fillMaxWidth().height((viewportScale * 800f).dp).clipToBounds()
+                    modifier = Modifier.fillMaxWidth().height(600.dp).clipToBounds()
                 ) {
                 AndroidView(
-                    modifier = Modifier.width(1280.dp).height(800.dp).graphicsLayer {
-                        scaleX = viewportScale
-                        scaleY = viewportScale
-                        transformOrigin = TransformOrigin(0f, 0f)
-                    },
+                    modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.databaseEnabled = true
                             settings.useWideViewPort = true
-                            settings.loadWithOverviewMode = true
+                            settings.loadWithOverviewMode = false
                             settings.setSupportZoom(true)
                             settings.builtInZoomControls = true
                             settings.displayZoomControls = false
                             settings.userAgentString = DESKTOP_UA
-                            setInitialScale(100)
+                            setInitialScale(150)
                             webViewClient = WebViewClient()
                             webChromeClient = WebChromeClient()
                             CookieManager.getInstance().setAcceptCookie(true)
