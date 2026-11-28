@@ -237,11 +237,13 @@ class TradingEngine(context: Context) {
 
     private fun requestHistory() {
         val c = _strategy.value
-        client.requestHistory(_asset.value, c.timeframeSec, 300)
+        client.requestHistory(_asset.value, 60, 300)
         scope.launch {
-            delay(250); client.requestHistory(_asset.value, 300, 240)
-            delay(250); client.requestHistory(_asset.value, 1800, 240)
-            delay(250); client.requestHistory(_asset.value, c.higherTimeframeSec, maxOf(c.htfEmaPeriod + 20, 250))
+            delay(200); client.requestHistory(_asset.value, 300, 240)
+            delay(200); client.requestHistory(_asset.value, 1800, 240)
+            delay(200); client.requestHistory(_asset.value, 3600, 240)
+            delay(200); client.requestHistory(_asset.value, c.timeframeSec, 300)
+            delay(200); client.requestHistory(_asset.value, c.higherTimeframeSec, maxOf(c.htfEmaPeriod + 20, 250))
         }
     }
 
@@ -431,9 +433,11 @@ class TradingEngine(context: Context) {
                                 }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
-                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 240)
+                                client.requestHistory(asset.symbol, 60, 240)
                                 client.requestHistory(asset.symbol, 300, 240)
                                 client.requestHistory(asset.symbol, 1800, 240)
+                                client.requestHistory(asset.symbol, 3600, 240)
+                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 240)
                                 client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 240)
                             }
                         }
@@ -477,7 +481,7 @@ class TradingEngine(context: Context) {
                 marketEngines[snap.asset]?.let { if (it !== signalEngine) add(it) }
             }
             targets.forEach { target ->
-                listOf(target.ltf, target.htf, target.m5, target.m30).forEach { agg ->
+                listOf(target.ltf, target.htf, target.m1, target.m5, target.m30, target.h1).forEach { agg ->
                     val candles = snap.candles.takeIf { snap.period == agg.periodSec } ?: emptyList()
                     // Only seed when it adds data; live candles are never thrown away for less history.
                     if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
