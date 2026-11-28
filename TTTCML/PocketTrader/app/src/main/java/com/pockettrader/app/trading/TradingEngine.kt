@@ -1127,10 +1127,14 @@ class TradingEngine(context: Context) {
         val demo = client.isDemo
         val sentAt = System.currentTimeMillis()
         val id = client.openOrder(asset, amount, direction, expirySec) ?: run {
+            // The broker did not accept the request. Release both the reserved risk slot
+            // and the in-memory signal claim so a still-fresh signal can be retried safely.
+            if (signalId != null) synchronized(lock) { claimedSignalIds.remove(signalId) }
             riskManager.onRejected()
             _riskState.value = riskManager.state
             persistRiskState(_account.value, riskManager.state, riskManager.config)
-            return "Order submission failed. Risk reservation released; check the connection before retrying."
+            log("Order submission failed for signal #$signalId; risk reservation and signal claim released")
+            return "Order submission failed. Risk reservation released; the signal can be retried if it is still fresh."
         }
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt, model = _model.value)
         _trades.update { (listOf(rec) + it).take(500) }
