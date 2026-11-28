@@ -217,11 +217,12 @@ class TradingEngine(context: Context) {
         val quoteAt = synchronized(lock) { marketTickAtMs[asset] ?: 0L }
         val quote = synchronized(lock) { marketPriceByAsset[asset] }
         val payout = _assets.value.firstOrNull { it.symbol == asset }?.payout?.toDouble()
+        val accountMode = _account.value.name
         scope.launch(Dispatchers.IO) {
             runCatching {
                 database.dao().insertValidationLog(ValidationLogEntity(
                     validationId = UUID.randomUUID().toString(), signalId = signalId, asset = asset,
-                    accountMode = _account.value.name, quotePrice = quote,
+                    accountMode = accountMode, quotePrice = quote,
                     quoteTimestamp = quoteAt.takeIf { it > 0L }, payout = payout, expirySeconds = expirySec,
                     riskAmountMinor = (amount * 100.0).roundToLong(),
                     validationStatus = if (error == null) "VALID" else "REJECTED",
@@ -251,31 +252,32 @@ class TradingEngine(context: Context) {
     }
 
     private fun persistRiskState(account: AccountType, state: RiskState, config: RiskConfig) {
-        val pnlMinor = (state.dailyPnl * 100.0).roundToLong()
-        val reason = riskManagers[account]?.blockReason(dayKey())
+        val manager = riskManagers[account]
+        val reason = manager?.blockReason(dayKey())
+        val snapshot = manager?.state ?: state
+        val pnlMinor = (snapshot.dailyPnl * 100.0).roundToLong()
         val label = when {
             reason != null -> "RISK_LOCKED"
-            state.openTrades > 0 -> "ACTIVE_TRADE"
+            snapshot.openTrades > 0 -> "ACTIVE_TRADE"
             else -> "IDLE"
         }
         scope.launch(Dispatchers.IO) {
             runCatching {
                 database.dao().upsertRiskState(RiskStateEntity(
-                    accountMode = account.name, dayKey = state.dayKey, state = label,
+                    accountMode = account.name, dayKey = snapshot.dayKey, state = label,
                     dailyLossMinor = (-pnlMinor).coerceAtLeast(0L), dailyProfitMinor = pnlMinor.coerceAtLeast(0L),
-                    consecutiveLosses = state.consecutiveLosses, tradesToday = state.sessionTrades,
-                    openTrades = state.openTrades, maximumDailyLossMinor = (config.dailyStopLoss * 100.0).roundToLong(),
+                    consecutiveLosses = snapshot.consecutiveLosses, tradesToday = snapshot.sessionTrades,
+                    openTrades = snapshot.openTrades, maximumDailyLossMinor = (config.dailyStopLoss * 100.0).roundToLong(),
                     maximumDailyTrades = config.maxTradesPerSession, updatedAt = System.currentTimeMillis()
                 ))
             }.onFailure { log("Database risk-state write failed: " + (it.message ?: "unknown")) }
         }
     }
 
-    private fun persistSignalCount(signal: Signal) {
+    private fun persistSignalCount(signal: Signal, accountMode: String) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val dao = database.dao()
-                val accountMode = _account.value.name
                 val key = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(signal.emittedAtMs))
                 val existing = dao.performance(key, signal.strategy.name, accountMode, signal.asset)
                 val count = (existing?.totalSignals ?: 0) + 1
@@ -293,7 +295,7 @@ class TradingEngine(context: Context) {
     private fun persistTradeOutcome(record: TradeRecord) {
         val key = dayKey()
         val accountMode = if (record.isDemo) AccountType.DEMO.name else AccountType.REAL.name
-        val strategyVersion = _strategy.value.type.name
+        val strategyVersion = record.signalId?.let { id -> _signalJournal.value.firstOrNull { it.signal.id == id }?.signal?.strategy?.name } ?: _strategy.value.type.name
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val dao = database.dao()
@@ -327,6 +329,7 @@ class TradingEngine(context: Context) {
     }
 
     private fun persistSignal(signal: Signal) {
+        val accountMode = _account.value.name
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val dao = database.dao()
@@ -334,7 +337,7 @@ class TradingEngine(context: Context) {
                     signalId = signal.id, asset = signal.asset, direction = signal.direction.name,
                     strategy = signal.strategy.name, reason = signal.reason, entryAtSec = signal.entryAtSec,
                     expirySeconds = signal.expirySec, confluenceScore = signal.confluenceScore,
-                    accountMode = _account.value.name, status = "GENERATED", createdAt = signal.emittedAtMs,
+                    accountMode = accountMode, status = "GENERATED", createdAt = signal.emittedAtMs,
                     expiresAt = (signal.entryAtSec + signal.expirySec) * 1000L
                 ))
                 val maximums = if (signal.reason.contains("Crypto")) mapOf("H1" to 17.0, "M30" to 13.0, "M5" to 22.0, "M1" to 33.0, "CRYPTO_VWAP_ATR" to 15.0)
@@ -343,7 +346,7 @@ class TradingEngine(context: Context) {
                     SignalComponentEntity(signalId = signal.id, component = name, direction = signal.direction.name,
                         rawScore = points.toDouble(), maximumScore = maximums[name] ?: 100.0, explanation = null)
                 })
-                persistSignalCount(signal)
+                persistSignalCount(signal, accountMode)
             }.onFailure { log("Database signal write failed: " + (it.message ?: "unknown")) }
         }
     }
