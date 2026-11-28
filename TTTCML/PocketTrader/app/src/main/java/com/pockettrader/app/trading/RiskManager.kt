@@ -40,6 +40,9 @@ class RiskManager(var config: RiskConfig) {
 
     @Synchronized fun resetSession() { state = state.copy(sessionTrades = 0, consecutiveLosses = 0) }
 
+    /** Restore the persisted counters after an Android process restart. */
+    @Synchronized fun restoreState(restored: RiskState) { state = restored }
+
     /** null = allowed, otherwise the reason it is blocked. */
     @Synchronized fun blockReason(dayKey: String): String? {
         rollDay(dayKey)
