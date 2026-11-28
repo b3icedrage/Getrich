@@ -33,10 +33,14 @@ class SignalEngine(cfg: StrategyConfig) {
         private set
     var htf = CandleAggregator(cfg.higherTimeframeSec)
         private set
-    /** Fixed context layers used by the M1 entry model. */
+    /** Fixed signal/context layers; independent of the chart's selected timeframe. */
+    var m1 = CandleAggregator(60)
+        private set
     var m5 = CandleAggregator(300)
         private set
     var m30 = CandleAggregator(1800)
+        private set
+    var h1 = CandleAggregator(3600)
         private set
     var isCryptoAsset: Boolean = false
     private var lastEvaluated = Long.MIN_VALUE
@@ -51,30 +55,35 @@ class SignalEngine(cfg: StrategyConfig) {
         }
     }
 
-    fun reset() { ltf.reset(); htf.reset(); m5.reset(); m30.reset(); lastEvaluated = Long.MIN_VALUE }
+    fun reset() { ltf.reset(); htf.reset(); m1.reset(); m5.reset(); m30.reset(); h1.reset(); lastEvaluated = Long.MIN_VALUE }
 
     /** Returns a signal when this tick closed a signal candle and the strategy fired. */
     fun onTick(asset: String, tsSec: Double, price: Double, nowMs: Long): Signal? {
         htf.onTick(tsSec, price)
+        m1.onTick(tsSec, price)
         m5.onTick(tsSec, price)
         m30.onTick(tsSec, price)
-        val closed = ltf.onTick(tsSec, price) ?: return null
+        h1.onTick(tsSec, price)
+        val closed = m1.onTick(tsSec, price) ?: return null
         return evaluate(asset, closed, nowMs)
     }
 
     /** Clock-driven close so the signal is emitted at the boundary even with no new tick. */
     fun onClock(asset: String, serverNowSec: Double, nowMs: Long): Signal? {
         htf.onClock(serverNowSec)
+        m1.onClock(serverNowSec)
         m5.onClock(serverNowSec)
         m30.onClock(serverNowSec)
-        val closed = ltf.onClock(serverNowSec) ?: return null
+        h1.onClock(serverNowSec)
+        val closed = m1.onClock(serverNowSec) ?: return null
         return evaluate(asset, closed, nowMs)
     }
 
     private fun evaluate(asset: String, closed: Candle, nowMs: Long): Signal? {
         if (closed.startSec <= lastEvaluated) return null
         lastEvaluated = closed.startSec
-        val htfCandles = htf.candles
+        val htfCandles = h1.candles
+        val m1Candles = m1.candles
         val m5Candles = m5.candles
         val m30Candles = m30.candles
         // TT is a market-wide indicator scanner, not a filter on the currently
@@ -82,14 +91,14 @@ class SignalEngine(cfg: StrategyConfig) {
         // publish a directional confluence candidate whenever it clears the watch
         // floor and directional edge. TradingEngine applies stricter execution checks.
         val analysis = IndicatorConfluence.analyze(
-            ltf.candles, htfCandles,
+            m1Candles, htfCandles,
             minScore = (minConfluenceScore - 10).coerceAtLeast(40)
         )
         val direction = analysis.recommendation ?: return null
-        val entryBlock = MultiTimeframeEntryRules.rejection(ltf.candles, m5Candles, m30Candles, htfCandles, direction)
+        val entryBlock = MultiTimeframeEntryRules.rejection(m1Candles, m5Candles, m30Candles, htfCandles, direction)
         if (entryBlock != null) return null
         val cryptoNote = if (isCryptoAsset) {
-            val cryptoBlock = CryptoVwapAtrFilter.rejection(ltf.candles, direction)
+            val cryptoBlock = CryptoVwapAtrFilter.rejection(m1Candles, direction)
             if (cryptoBlock != null) return null
             " | Crypto tick-volume VWAP divergence + 1.5 ATR bands confirmed (VWAP is a proxy, not exchange volume)"
         } else ""
@@ -97,6 +106,6 @@ class SignalEngine(cfg: StrategyConfig) {
         val reason = "MTF confirmed: H1 + M30 structure, M5 pullback, M1 trigger | ${analysis.summary} | CALL ${analysis.callScore}/100, PUT ${analysis.putScore}/100$volatility$cryptoNote"
         val score = if (direction == Direction.CALL) analysis.callScore else analysis.putScore
         return Signal(nowMs * 1000L + globalSignalIds.getAndIncrement().mod(1000L), asset, direction, config.type, reason,
-            closed.startSec + config.timeframeSec, config.expirySec, nowMs, score, closed.close)
+            closed.startSec + 60, config.expirySec, nowMs, score, closed.close)
     }
 }
