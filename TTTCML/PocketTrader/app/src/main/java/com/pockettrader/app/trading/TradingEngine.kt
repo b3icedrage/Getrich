@@ -64,6 +64,7 @@ data class TradeRecord(
     val netProfit: Double? = null,
     val note: String? = null,
     val entryPrice: Double? = null,
+    val model: TradingModel = TradingModel.CLASSIC,
 )
 
 data class LogLine(val timeMs: Long, val text: String)
@@ -173,8 +174,10 @@ class TradingEngine(context: Context) {
                             direction = Direction.valueOf(row.direction), amount = row.stakeMinor / 100.0,
                             expirySec = row.expirySeconds, isDemo = row.accountMode == AccountType.DEMO.name,
                             source = if (row.signalId == null) TradeSource.MANUAL else TradeSource.TT,
+                            model = runCatching { TradingModel.valueOf(row.tradingModel) }.getOrDefault(TradingModel.CLASSIC),
                             signalId = row.signalId, placedAtMs = row.submittedAt,
                             status = TradeStatus.valueOf(row.executionStatus),
+                            model = runCatching { TradingModel.valueOf(row.tradingModel) }.getOrDefault(TradingModel.CLASSIC),
                             netProfit = row.profitLossMinor?.div(100.0), entryPrice = row.entryPrice
                         )
                     }.getOrNull()
@@ -246,6 +249,7 @@ class TradingEngine(context: Context) {
                     orderId = record.requestId, signalId = record.signalId, brokerOrderId = record.dealId,
                     asset = record.asset, direction = record.direction.name,
                     accountMode = if (record.isDemo) AccountType.DEMO.name else AccountType.REAL.name,
+                    tradingModel = record.model.name,
                     stakeMinor = (record.amount * 100.0).roundToLong(), entryPrice = record.entryPrice,
                     exitPrice = exitPrice, payout = _assets.value.firstOrNull { it.symbol == record.asset }?.payout?.toDouble(),
                     expirySeconds = record.expirySec, executionStatus = record.status.name,
@@ -1129,7 +1133,7 @@ class TradingEngine(context: Context) {
             persistRiskState(_account.value, riskManager.state, riskManager.config)
             return "Order submission failed. Risk reservation released; check the connection before retrying."
         }
-        val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt)
+        val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt, model = _model.value)
         _trades.update { (listOf(rec) + it).take(500) }
         persistTrade(rec)
         if (signalId != null) updateSignalAudit(signalId) {
