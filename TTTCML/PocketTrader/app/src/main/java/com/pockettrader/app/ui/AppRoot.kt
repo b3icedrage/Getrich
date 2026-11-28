@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -127,14 +128,19 @@ fun AppRoot(engine: TradingEngine) {
                     Column(Modifier.padding(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("TRADING MODEL", color = Color(0xFF9FB4CF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, modifier = Modifier.weight(1f))
-                            Text(if (model == TradingModel.FOUR_AGENT) "4-AGENT PIPELINE" else "CLASSIC ENGINE", color = if (model == TradingModel.FOUR_AGENT) Color(0xFF73E6C7) else Color(0xFF9CC7FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(when (model) { TradingModel.CLASSIC -> "CLASSIC ENGINE"; TradingModel.FOUR_AGENT -> "4-AGENT PIPELINE"; TradingModel.DONCHIAN_MOMENTUM -> "DONCHIAN MOMENTUM" }, color = if (model == TradingModel.FOUR_AGENT) Color(0xFF73E6C7) else if (model == TradingModel.DONCHIAN_MOMENTUM) Color(0xFFFFC76A) else Color(0xFF9CC7FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.height(7.dp))
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            SegmentedButton(selected = model == TradingModel.CLASSIC, onClick = { engine.switchModel(TradingModel.CLASSIC)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Model 1 · Classic") }
-                            SegmentedButton(selected = model == TradingModel.FOUR_AGENT, onClick = { engine.switchModel(TradingModel.FOUR_AGENT)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Model 2 · Agents") }
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            SegmentedButton(selected = model == TradingModel.CLASSIC, onClick = { engine.switchModel(TradingModel.CLASSIC)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("1 · Classic", fontSize = 11.sp) }
+                            SegmentedButton(selected = model == TradingModel.FOUR_AGENT, onClick = { engine.switchModel(TradingModel.FOUR_AGENT)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("2 · Agents", fontSize = 11.sp) }
+                            SegmentedButton(selected = model == TradingModel.DONCHIAN_MOMENTUM, onClick = { engine.switchModel(TradingModel.DONCHIAN_MOMENTUM)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("3 · Donchian", fontSize = 11.sp) }
                         }
-                        Text(if (model == TradingModel.FOUR_AGENT) "Scan → Analyze → 3% Risk Gate → Auto Execute" else "Your existing multi-timeframe strategy and settings", color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                        Text(when (model) {
+                            TradingModel.CLASSIC -> "Original multi-timeframe strategy and Classic risk settings"
+                            TradingModel.FOUR_AGENT -> "Scan → Analyze → 3% Risk Gate → Auto Execute"
+                            TradingModel.DONCHIAN_MOMENTUM -> "Donchian 50 breakout + AC (15,50,5) + AO (30,17)"
+                        }, color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                     }
                 }
                 if (auto) {
@@ -851,7 +857,7 @@ fun AnalyticsScreen(engine: TradingEngine) {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
                 Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (modelType == TradingModel.CLASSIC) "Model 1 · Classic" else "Model 2 · Four Agents", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text(when (modelType) { TradingModel.CLASSIC -> "Model 1 · Classic"; TradingModel.FOUR_AGENT -> "Model 2 · Four Agents"; TradingModel.DONCHIAN_MOMENTUM -> "Model 3 · Donchian Momentum" }, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         Text("${modelTrades.size} settled", color = Color(0xFFB7C7DA), fontSize = 11.sp)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
