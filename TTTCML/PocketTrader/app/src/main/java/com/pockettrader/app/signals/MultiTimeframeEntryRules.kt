@@ -61,10 +61,10 @@ object CryptoVwapAtrFilter {
     data class Result(val reason: String, val vwap: Double, val upperBand: Double, val lowerBand: Double)
 
     fun rejection(candles: List<Candle>, direction: Direction): Result? {
-        if (candles.size < 35) return null
+        if (candles.size < 35) return Result("waiting for at least 35 M1 candles", Double.NaN, Double.NaN, Double.NaN)
         val day = Math.floorDiv(candles.last().startSec, 86_400L)
         val session = candles.filter { Math.floorDiv(it.startSec, 86_400L) == day && it.volume > 0.0 }
-        if (session.size < 30) return null
+        if (session.size < 30) return Result("insufficient positive tick-volume samples for VWAP proxy", Double.NaN, Double.NaN, Double.NaN)
         var weighted = 0.0
         var volume = 0.0
         val vwap = DoubleArray(candles.size) { Double.NaN }
@@ -84,7 +84,7 @@ object CryptoVwapAtrFilter {
         val highs = candles.map { it.high }; val lows = candles.map { it.low }; val closes = candles.map { it.close }
         val atr = Indicators.atr(highs, lows, closes, 14)[n]
         val currentVwap = vwap[n]
-        if (!atr.isFinite() || atr <= 0.0 || !currentVwap.isFinite()) return null
+        if (!atr.isFinite() || atr <= 0.0 || !currentVwap.isFinite()) return Result("VWAP or ATR is not ready", Double.NaN, Double.NaN, Double.NaN)
         val upper = currentVwap + 1.5 * atr
         val lower = currentVwap - 1.5 * atr
         if (closes[n] > upper || closes[n] < lower) return Result("price is outside the 1.5 ATR VWAP band", currentVwap, upper, lower)
@@ -92,8 +92,8 @@ object CryptoVwapAtrFilter {
         val start = (n - 30).coerceAtLeast(2)
         val pivots = (start..(n - 2)).filter { i ->
             vwap[i].isFinite() && vwap[i - 1].isFinite() && vwap[i + 1].isFinite() &&
-                if (direction == Direction.CALL) lows[i] <= lows[i - 1] && lows[i] < lows[i + 1]
-                else highs[i] >= highs[i - 1] && highs[i] > highs[i + 1]
+                (if (direction == Direction.CALL) lows[i] <= lows[i - 1] && lows[i] < lows[i + 1]
+                else highs[i] >= highs[i - 1] && highs[i] > highs[i + 1])
         }
         if (pivots.size < 2) return Result("waiting for two VWAP-comparable swing points", currentVwap, upper, lower)
         val a = pivots[pivots.size - 2]
