@@ -20,6 +20,7 @@ enum class StrategyType(val label: String, val description: String) {
     EMA_RSI("EMA cross + RSI (simple)", "Fast EMA crosses slow EMA, confirmed by RSI on the same side of 50."),
     ADAPTIVE_AI("Adaptive AI (HMM + KDE)", "Three-state HMM volatility regime gate; KDE residual tails for mean reversion; momentum in normal regimes; chaotic regimes wait."),
     CONSENSUS("Multi-strategy consensus", "Runs every strategy and combines independent BUY/SELL votes; weak or conflicting setups return NO TRADE."),
+    DONCHIAN_MOMENTUM("Donchian Momentum", "50-period Donchian breakout confirmed by Accelerator Oscillator (15,50,5) and Awesome Oscillator (30,17)."),
 }
 
 enum class TrendTrigger { MACD, SUPERTREND }
@@ -64,6 +65,7 @@ object Strategies {
         StrategyType.EMA_RSI -> emaRsi(cfg, ltf)
         StrategyType.ADAPTIVE_AI -> adaptiveAi(cfg, ltf, htf)
         StrategyType.CONSENSUS -> consensus(cfg, ltf, htf)
+        StrategyType.DONCHIAN_MOMENTUM -> donchianMomentum(ltf)
     }
 
     /**
@@ -196,6 +198,29 @@ object Strategies {
         return when {
             c.low <= lo && rsi < cfg.rsiOversold -> Decision(Direction.CALL, StrategyType.MEAN_REVERSION, "Lower BB touch, RSI %.1f".format(rsi))
             c.high >= up && rsi > cfg.rsiOverbought -> Decision(Direction.PUT, StrategyType.MEAN_REVERSION, "Upper BB touch, RSI %.1f".format(rsi))
+            else -> null
+        }
+    }
+
+    /** Model 3: closed-candle Donchian breakout with aligned AC and AO momentum. */
+    fun donchianMomentum(ltf: List<Candle>): Decision? {
+        val n = ltf.size
+        val donchianPeriod = 50
+        if (n <= donchianPeriod + 1) return null
+        val highs = ltf.map { it.high }; val lows = ltf.map { it.low }
+        val channel = Indicators.donchian(highs, lows, donchianPeriod)
+        val ac = Indicators.acceleratorOscillator(highs, lows, fastPeriod = 15, slowPeriod = 50, signalPeriod = 5)
+        val ao = Indicators.awesomeOscillator(highs, lows, slowPeriod = 30, fastPeriod = 17)
+        val i = n - 1; val p = n - 2
+        if (!channel.upper[i].isFinite() || !channel.lower[i].isFinite() ||
+            !ac[i].isFinite() || !ac[p].isFinite() || !ao[i].isFinite() || !ao[p].isFinite()) return null
+        val bullish = ltf[i].close > channel.upper[i] && ac[i] > 0.0 && ac[i] > ac[p] && ao[i] > 0.0 && ao[i] > ao[p]
+        val bearish = ltf[i].close < channel.lower[i] && ac[i] < 0.0 && ac[i] < ac[p] && ao[i] < 0.0 && ao[i] < ao[p]
+        return when {
+            bullish -> Decision(Direction.CALL, StrategyType.DONCHIAN_MOMENTUM,
+                "Close broke above prior 50-candle Donchian high; AC(15,50,5) positive and rising; AO(30,17) positive and rising")
+            bearish -> Decision(Direction.PUT, StrategyType.DONCHIAN_MOMENTUM,
+                "Close broke below prior 50-candle Donchian low; AC(15,50,5) negative and falling; AO(30,17) negative and falling")
             else -> null
         }
     }
