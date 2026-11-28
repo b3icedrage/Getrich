@@ -44,7 +44,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToLong
 
-enum class TradingModel { CLASSIC, FOUR_AGENT }
+enum class TradingModel { CLASSIC, FOUR_AGENT, DONCHIAN_MOMENTUM }
 enum class AccountType { DEMO, REAL }
 enum class TradeSource { MANUAL, AUTO, TT }
 enum class TradeStatus { PENDING, OPEN, WIN, LOSS, DRAW, FAILED, UNKNOWN }
@@ -138,7 +138,10 @@ class TradingEngine(context: Context) {
     private val marketTickAtMs = mutableMapOf<String, Long>()
     private val marketPriceByAsset = mutableMapOf<String, Double>()
     private val signalEngine = SignalEngine(_strategy.value)
-    init { signalEngine.minConfluenceScore = _minConfluence.value }
+    init {
+        signalEngine.minConfluenceScore = _minConfluence.value
+        signalEngine.donchianMomentumMode = _model.value == TradingModel.DONCHIAN_MOMENTUM
+    }
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
     private val _lastTickAtMs = MutableStateFlow(0L)
     val lastTickAtMs: StateFlow<Long> = _lastTickAtMs
@@ -492,15 +495,30 @@ class TradingEngine(context: Context) {
         val nextRisk = when (model) {
             TradingModel.CLASSIC -> _risk.value.copy(stakePercent = classicStakePercent.coerceIn(0.1, 5.0))
             TradingModel.FOUR_AGENT -> _risk.value.copy(stakePercent = 3.0)
+            TradingModel.DONCHIAN_MOMENTUM -> _risk.value.copy(stakePercent = classicStakePercent.coerceIn(0.1, 5.0))
         }
         _model.value = model
+        synchronized(lock) {
+            val donchian = model == TradingModel.DONCHIAN_MOMENTUM
+            signalEngine.donchianMomentumMode = donchian
+            marketEngines.values.forEach { it.donchianMomentumMode = donchian }
+        }
         modelPrefs.edit().putString("active_model", model.name).apply()
         _risk.value = nextRisk
         store.saveRisk(nextRisk)
         riskManagers.values.forEach { it.config = nextRisk }
         _riskState.value = riskManager.state
-        log(if (model == TradingModel.FOUR_AGENT) "Model 2 activated: Scanner → Opportunity Analyst → 3% Risk Manager → Auto Execution" else "Model 1 Classic activated: existing strategy and risk settings restored")
-        return if (model == TradingModel.FOUR_AGENT) "Model 2 is active. Enable Auto Trader to allow Agent 4 to execute after Agent 3 approval. Every stake is capped at 3% of the current balance." else "Model 1 Classic is active. Your previous Classic risk percentage was restored."
+        val label = when (model) {
+            TradingModel.CLASSIC -> "Model 1 Classic"
+            TradingModel.FOUR_AGENT -> "Model 2 Four-Agent"
+            TradingModel.DONCHIAN_MOMENTUM -> "Model 3 Donchian Momentum (Donchian 50 + AC 15/50/5 + AO 30/17)"
+        }
+        log("$label activated; Auto Trader remains off after model switch")
+        return when (model) {
+            TradingModel.CLASSIC -> "Model 1 Classic is active. Your previous Classic risk percentage was restored."
+            TradingModel.FOUR_AGENT -> "Model 2 is active. Enable Auto Trader to allow Agent 4 to execute after Agent 3 approval. Every stake is capped at 3% of the current balance."
+            TradingModel.DONCHIAN_MOMENTUM -> "Model 3 is active. Signals require a 50-candle Donchian breakout with aligned and strengthening AC and AO. Classic risk settings apply; Auto Trader remains off."
+        }
     }
 
     fun resetSession() {
@@ -674,6 +692,7 @@ class TradingEngine(context: Context) {
                                 val scanner = SignalEngine(_strategy.value).also {
                                     it.minConfluenceScore = _minConfluence.value
                                     it.isCryptoAsset = isCryptoAsset(asset)
+                                    it.donchianMomentumMode = _model.value == TradingModel.DONCHIAN_MOMENTUM
                                 }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
