@@ -319,10 +319,11 @@ class TradingEngine(context: Context) {
     private fun isCryptoAsset(asset: Asset): Boolean {
         val type = asset.type.lowercase(Locale.US)
         if (type.contains("crypto") || type.contains("cryptocurrency")) return true
-        val symbol = asset.symbol.uppercase(Locale.US).replace(Regex("[^A-Z0-9]"), "")
+        val symbol = asset.symbol.uppercase(Locale.US).replace(Regex("[^A-Z0-9]"), "").removeSuffix("OTC")
         val bases = "BTC|ETH|XRP|LTC|BCH|ADA|DOGE|SOL|DOT|BNB|TRX|LINK|AVAX|TON|SHIB|XLM|ETC|NEAR|ATOM|UNI|APT|ARB|OP|FIL|ICP|SUI|PEPE"
         return Regex("^(?:$bases)(?:USD|USDT|USDC|EUR|GBP|JPY|AUD|CAD|CHF)?$").matches(symbol) ||
-            asset.name.contains("cryptocurrency", ignoreCase = true)
+            asset.name.contains("cryptocurrency", ignoreCase = true) ||
+            listOf("bitcoin", "ethereum", "ripple", "litecoin", "solana", "dogecoin", "cardano").any { asset.name.contains(it, ignoreCase = true) }
     }
 
     private fun persistSignal(signal: Signal) {
