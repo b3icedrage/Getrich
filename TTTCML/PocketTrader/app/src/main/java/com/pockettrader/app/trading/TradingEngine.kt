@@ -477,7 +477,7 @@ class TradingEngine(context: Context) {
                 marketEngines[snap.asset]?.let { if (it !== signalEngine) add(it) }
             }
             targets.forEach { target ->
-                listOf(target.ltf, target.htf, target.m5, target.m30).distinctBy { it.periodSec }.forEach { agg ->
+                listOf(target.ltf, target.htf, target.m5, target.m30).forEach { agg ->
                     val candles = snap.candles.takeIf { snap.period == agg.periodSec } ?: emptyList()
                     // Only seed when it adds data; live candles are never thrown away for less history.
                     if (candles.size > agg.candles.size) agg.seed(candles, snap.ticks.filter { it.first > (candles.lastOrNull()?.startSec ?: 0L).toDouble() })
