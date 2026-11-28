@@ -23,6 +23,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -60,6 +64,8 @@ private data class PendingAction(val action: VisionAction, val screenshot: Bitma
 @Composable
 private fun GrokScreen() {
     val context = LocalContext.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val viewportScale = ((screenWidthDp - 20).coerceAtLeast(320)).toFloat() / 1280f
     val webViewState = remember { mutableStateOf<WebView?>(null) }
     val service = remember { NvidiaVisionService() }
     var url by remember { mutableStateOf("https://pocketoption.com/en/cabinet/demo/") }
@@ -269,8 +275,15 @@ private fun GrokScreen() {
         Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
             Column(modifier = Modifier.padding(8.dp)) {
                 Text("Desktop browser • 1280 × 800 logical chart view", style = MaterialTheme.typography.labelLarge)
+                Box(
+                    modifier = Modifier.fillMaxWidth().height((viewportScale * 800f).dp).clipToBounds()
+                ) {
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(440.dp),
+                    modifier = Modifier.width(1280.dp).height(800.dp).graphicsLayer {
+                        scaleX = viewportScale
+                        scaleY = viewportScale
+                        transformOrigin = TransformOrigin(0f, 0f)
+                    },
                     factory = { ctx ->
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
@@ -282,6 +295,7 @@ private fun GrokScreen() {
                             settings.builtInZoomControls = true
                             settings.displayZoomControls = false
                             settings.userAgentString = DESKTOP_UA
+                            setInitialScale(100)
                             webViewClient = WebViewClient()
                             webChromeClient = WebChromeClient()
                             CookieManager.getInstance().setAcceptCookie(true)
@@ -292,6 +306,7 @@ private fun GrokScreen() {
                     },
                     update = { webViewState.value = it }
                 )
+                }
             }
         }
         Text("Manual login, 2FA and CAPTCHA are completed by you. AI will not fill password or OTP fields.", style = MaterialTheme.typography.bodySmall)
