@@ -86,6 +86,7 @@ class TradingEngine(context: Context) {
     private val app = context.applicationContext
     val store = SecureStore(app)
     private val database = PocketTraderDatabase.get(app)
+    @Volatile private var persistenceReady = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = PocketClient(scope)
     private val nemotron = NemotronClient()
@@ -172,6 +173,7 @@ class TradingEngine(context: Context) {
                     }.getOrNull()
                 }
                 _riskState.value = riskManager.state
+                persistenceReady = true
             }.onFailure { log("Could not restore database state: " + (it.message ?: "unknown")) }
         }
         scope.launch { client.events.collect { onEvent(it) } }
@@ -978,6 +980,7 @@ class TradingEngine(context: Context) {
         place(_asset.value, amount, direction, expirySec, TradeSource.MANUAL, null)
 
     private fun validateOrder(asset: String, amount: Double, direction: Direction, expirySec: Int, signalId: Long?): String? {
+        if (!persistenceReady) return "Restoring the local trading journal and risk state. Try again in a moment."
         if (connState.value != ConnState.CONNECTED) return "Not connected"
         val demo = _account.value == AccountType.DEMO
         if (client.isDemo != demo) return "Session/account mismatch. Reconnect to the selected account."
@@ -1032,11 +1035,13 @@ class TradingEngine(context: Context) {
         }
         if (reservationError != null) return reservationError
         _riskState.value = riskManager.state
+        persistRiskState(_account.value, riskManager.state, riskManager.config)
         val demo = client.isDemo
         val sentAt = System.currentTimeMillis()
         val id = client.openOrder(asset, amount, direction, expirySec) ?: run {
             riskManager.onRejected()
             _riskState.value = riskManager.state
+            persistRiskState(_account.value, riskManager.state, riskManager.config)
             return "Order submission failed. Risk reservation released; check the connection before retrying."
         }
         val rec = TradeRecord(id, null, asset, direction, amount, expirySec, demo, source, signalId, sentAt)
