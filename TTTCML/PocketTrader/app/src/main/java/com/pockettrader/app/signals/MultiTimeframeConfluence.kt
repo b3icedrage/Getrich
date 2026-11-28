@@ -73,8 +73,13 @@ object MultiTimeframeConfluence {
         val (call,callParts)=score(Direction.CALL); val (put,putParts)=score(Direction.PUT)
         val edge=abs(call-put); val best=maxOf(call,put)
         val recommendation=when { best<minScore || edge<10 -> null; call>put -> Direction.CALL; else -> Direction.PUT }
-        val explanation="H1 \${callParts["H1"] ?: 0}/\${if(isCrypto) 17 else 20}, M30 \${callParts["M30"] ?: 0}/\${if(isCrypto) 13 else 15}, M5 \${callParts["M5"] ?: 0}/\${if(isCrypto) 22 else 25}, M1 \${callParts["M1"] ?: 0}/\${if(isCrypto) 33 else 40}" +
-            if(isCrypto) ", Crypto VWAP/ATR \${callParts["CRYPTO_VWAP_ATR"] ?: 0}/15" else ""
+        val h1Points = callParts["H1"] ?: 0
+        val m30Points = callParts["M30"] ?: 0
+        val m5Points = callParts["M5"] ?: 0
+        val m1Points = callParts["M1"] ?: 0
+        val cryptoPoints = callParts["CRYPTO_VWAP_ATR"] ?: 0
+        val explanation = "H1 $h1Points/${if (isCrypto) 17 else 20}, M30 $m30Points/${if (isCrypto) 13 else 15}, M5 $m5Points/${if (isCrypto) 22 else 25}, M1 $m1Points/${if (isCrypto) 33 else 40}" +
+            if (isCrypto) ", Crypto VWAP/ATR $cryptoPoints/15" else ""
         return MultiTimeframeScore(call,put,recommendation,explanation,callParts,putParts)
     }
 }
