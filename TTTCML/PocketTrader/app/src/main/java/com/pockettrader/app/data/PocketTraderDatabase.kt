@@ -74,7 +74,7 @@ data class ValidationLogEntity(
 
 @Entity(
     tableName = "executed_orders",
-    indices = [Index("signalId"), Index("submittedAt"), Index("accountMode"), Index("executionStatus")]
+    indices = [Index("signalId"), Index("submittedAt"), Index("accountMode"), Index("executionStatus"), Index(value = ["signalId", "accountMode"], unique = true)]
 )
 data class ExecutedOrderEntity(
     @PrimaryKey val orderId: String,
