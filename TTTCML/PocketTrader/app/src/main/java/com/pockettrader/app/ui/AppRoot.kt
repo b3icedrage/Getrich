@@ -52,6 +52,7 @@ import com.pockettrader.app.signals.TrendTrigger
 import com.pockettrader.app.trading.AccountType
 import com.pockettrader.app.trading.TradeStatus
 import com.pockettrader.app.trading.TradingEngine
+import com.pockettrader.app.trading.TradingModel
 import com.pockettrader.app.analytics.analyseTechnicalMarket
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -80,6 +81,7 @@ fun AppRoot(engine: TradingEngine) {
     val account by engine.account.collectAsStateWithLifecycle()
     val balance by engine.balance.collectAsStateWithLifecycle()
     val auto by engine.autoEnabled.collectAsStateWithLifecycle()
+    val model by engine.model.collectAsStateWithLifecycle()
 
     if (showWebLogin) {
         LoginWebViewScreen(onCaptured = { engine.saveSession(it) }, onClose = { showWebLogin = false })
@@ -99,7 +101,7 @@ fun AppRoot(engine: TradingEngine) {
 
     Scaffold(
         topBar = {
-            Column(Modifier.background(Brush.horizontalGradient(if (account == AccountType.REAL) listOf(Color(0xFF5B171D), Color(0xFF241116)) else listOf(Color(0xFF123B55), Color(0xFF101D35)))).padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Column(Modifier.background(Brush.linearGradient(if (account == AccountType.REAL) listOf(Color(0xFF6B2633), Color(0xFF251323), Color(0xFF101827)) else listOf(Color(0xFF164E63), Color(0xFF142B49), Color(0xFF101827)))).padding(horizontal = 16.dp, vertical = 14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("PocketTrader", fontWeight = FontWeight.Bold, fontSize = 21.sp, letterSpacing = 0.3.sp, color = Color.White)
@@ -118,6 +120,21 @@ fun AppRoot(engine: TradingEngine) {
                             shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Demo") }
                         SegmentedButton(selected = account == AccountType.REAL, onClick = { if (account != AccountType.REAL) confirmReal = true },
                             shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Real") }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Surface(color = Color.White.copy(alpha = 0.07f), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("TRADING MODEL", color = Color(0xFF9FB4CF), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp, modifier = Modifier.weight(1f))
+                            Text(if (model == TradingModel.FOUR_AGENT) "4-AGENT PIPELINE" else "CLASSIC ENGINE", color = if (model == TradingModel.FOUR_AGENT) Color(0xFF73E6C7) else Color(0xFF9CC7FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(selected = model == TradingModel.CLASSIC, onClick = { engine.switchModel(TradingModel.CLASSIC)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Model 1 · Classic") }
+                            SegmentedButton(selected = model == TradingModel.FOUR_AGENT, onClick = { engine.switchModel(TradingModel.FOUR_AGENT)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Model 2 · Agents") }
+                        }
+                        Text(if (model == TradingModel.FOUR_AGENT) "Scan → Analyze → 3% Risk Gate → Auto Execute" else "Your existing multi-timeframe strategy and settings", color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
                     }
                 }
                 if (auto) {
