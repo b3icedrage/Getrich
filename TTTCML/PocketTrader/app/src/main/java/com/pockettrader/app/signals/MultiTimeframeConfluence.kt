@@ -18,7 +18,7 @@ data class MultiTimeframeScore(
 object MultiTimeframeConfluence {
     fun analyze(m1: List<Candle>, m5: List<Candle>, m30: List<Candle>, h1: List<Candle>, isCrypto: Boolean, minScore: Int): MultiTimeframeScore {
         val empty = MultiTimeframeScore(0, 0, null, "Waiting for sufficient closed M1/M5/M30/H1 history", emptyMap(), emptyMap())
-        if (listOf(m1, m5, m30, h1).any { it.size < 55 }) return empty
+        if (m1.size < 55 || m5.size < 55 || m30.size < 55 || h1.size < 205) return empty
         fun score(direction: Direction): Pair<Int, Map<String, Int>> {
             val sign = if (direction == Direction.CALL) 1 else -1
             fun agrees(v: Double) = v.isFinite() && if (sign > 0) v > 0.0 else v < 0.0
