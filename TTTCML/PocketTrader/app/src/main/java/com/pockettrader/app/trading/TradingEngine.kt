@@ -169,6 +169,15 @@ class TradingEngine(context: Context) {
 
     private fun dayKey(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
+    private fun isCryptoAsset(asset: Asset): Boolean {
+        val type = asset.type.lowercase(Locale.US)
+        if (type.contains("crypto") || type.contains("cryptocurrency")) return true
+        val symbol = asset.symbol.uppercase(Locale.US).replace(Regex("[^A-Z0-9]"), "")
+        val bases = "BTC|ETH|XRP|LTC|BCH|ADA|DOGE|SOL|DOT|BNB|TRX|LINK|AVAX|TON|SHIB|XLM|ETC|NEAR|ATOM|UNI|APT|ARB|OP|FIL|ICP|SUI|PEPE"
+        return Regex("^(?:$bases)(?:USD|USDT|USDC|EUR|GBP|JPY|AUD|CAD|CHF)?$").matches(symbol) ||
+            asset.name.contains("cryptocurrency", ignoreCase = true)
+    }
+
     private fun persistSignal(signal: Signal) {
         scope.launch(Dispatchers.IO) {
             runCatching {
@@ -255,6 +264,7 @@ class TradingEngine(context: Context) {
         _lastTickAtMs.value = 0L
         _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
         signalEngine.reset()
+        signalEngine.isCryptoAsset = _assets.value.firstOrNull { it.symbol == symbol }?.let(::isCryptoAsset) ?: false
         client.watch(symbol, _strategy.value.timeframeSec)
         requestHistory()
     }
@@ -453,7 +463,7 @@ class TradingEngine(context: Context) {
                             if (!marketEngines.containsKey(asset.symbol)) {
                                 val scanner = SignalEngine(_strategy.value).also {
                                     it.minConfluenceScore = _minConfluence.value
-                                    it.isCryptoAsset = asset.type.contains("crypto", ignoreCase = true)
+                                    it.isCryptoAsset = isCryptoAsset(asset)
                                 }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
@@ -462,6 +472,7 @@ class TradingEngine(context: Context) {
                             }
                         }
                     }
+                    signalEngine.isCryptoAsset = listed.firstOrNull { it.symbol == _asset.value }?.let(::isCryptoAsset) ?: false
                     if (signalEngine.ltf.candles.isEmpty()) requestHistory()
                     log("TT market scan subscribed to " + activeAssets.size + " active pairs (including OTC where listed)")
                 }
