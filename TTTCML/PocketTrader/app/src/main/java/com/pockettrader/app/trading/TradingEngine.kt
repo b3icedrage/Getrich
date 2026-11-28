@@ -127,6 +127,7 @@ class TradingEngine(context: Context) {
     // Independent candle engines let TT scan every active broker-listed pair.
     private val marketEngines = mutableMapOf<String, SignalEngine>()
     private val marketTickAtMs = mutableMapOf<String, Long>()
+    private val marketPriceByAsset = mutableMapOf<String, Double>()
     private val signalEngine = SignalEngine(_strategy.value)
     init { signalEngine.minConfluenceScore = _minConfluence.value }
     private val _candleCount = MutableStateFlow(0 to 0); val candleCount: StateFlow<Pair<Int, Int>> = _candleCount
@@ -212,7 +213,7 @@ class TradingEngine(context: Context) {
 
     private fun persistValidation(asset: String, amount: Double, expirySec: Int, signalId: Long?, error: String?) {
         val quoteAt = synchronized(lock) { marketTickAtMs[asset] ?: 0L }
-        val quote = if (asset == _asset.value) _price.value else null
+        val quote = synchronized(lock) { marketPriceByAsset[asset] }
         val payout = _assets.value.firstOrNull { it.symbol == asset }?.payout?.toDouble()
         scope.launch(Dispatchers.IO) {
             runCatching {
@@ -367,7 +368,7 @@ class TradingEngine(context: Context) {
         TradingService.start(app, _account.value)
         signalEngine.reset(); _price.value = null; _balance.value = null; _lastTickAtMs.value = 0L
         _priceHistory.value = emptyList(); _candleHistory.value = emptyList()
-        synchronized(lock) { marketEngines.clear(); marketTickAtMs.clear() }
+        synchronized(lock) { marketEngines.clear(); marketTickAtMs.clear(); marketPriceByAsset.clear() }
         client.watch(_asset.value, _strategy.value.timeframeSec)
         client.connect(s)
         return null
@@ -634,7 +635,7 @@ class TradingEngine(context: Context) {
                 val selected = _asset.value
                 val now = System.currentTimeMillis()
                 for (t in e.ticks) {
-                    synchronized(lock) { marketTickAtMs[t.symbol] = now }
+                    synchronized(lock) { marketTickAtMs[t.symbol] = now; marketPriceByAsset[t.symbol] = t.price }
                     if (t.symbol == selected) {
                         _price.value = t.price
                         _lastTickAtMs.value = now
