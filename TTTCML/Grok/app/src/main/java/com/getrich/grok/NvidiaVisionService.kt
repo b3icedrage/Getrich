@@ -29,7 +29,8 @@ Inspect the screenshot and follow this user strategy:
 $strategy
 
 Return exactly one JSON object and no markdown:
-{"action":"click"|"type"|"wait","x":0,"y":0,"text":"","is_order_submission":false,"reason":"brief explanation"}
+{"action":"wait","x":0,"y":0,"text":"","is_order_submission":false,"reason":"brief explanation"}
+The action value must be exactly one of: click, type, wait. Output valid JSON.
 
 Coordinates are measured on the supplied 1280x800 screenshot, origin at top-left.
 Use wait if the chart is unclear, loading, login/2FA/CAPTCHA is visible, or no safe action is needed.
