@@ -237,13 +237,13 @@ class TradingEngine(context: Context) {
 
     private fun requestHistory() {
         val c = _strategy.value
-        client.requestHistory(_asset.value, 60, 300)
+        val periods = listOf(60, 300, 1800, 3600, c.timeframeSec, c.higherTimeframeSec).distinct()
         scope.launch {
-            delay(200); client.requestHistory(_asset.value, 300, 240)
-            delay(200); client.requestHistory(_asset.value, 1800, 240)
-            delay(200); client.requestHistory(_asset.value, 3600, 240)
-            delay(200); client.requestHistory(_asset.value, c.timeframeSec, 300)
-            delay(200); client.requestHistory(_asset.value, c.higherTimeframeSec, maxOf(c.htfEmaPeriod + 20, 250))
+            periods.forEachIndexed { index, period ->
+                if (index > 0) delay(200)
+                val count = if (period == c.higherTimeframeSec) maxOf(c.htfEmaPeriod + 20, 250) else 300
+                client.requestHistory(_asset.value, period, count)
+            }
         }
     }
 
@@ -433,12 +433,8 @@ class TradingEngine(context: Context) {
                                 }
                                 marketEngines[asset.symbol] = scanner
                                 client.subscribeMarket(asset.symbol)
-                                client.requestHistory(asset.symbol, 60, 240)
-                                client.requestHistory(asset.symbol, 300, 240)
-                                client.requestHistory(asset.symbol, 1800, 240)
-                                client.requestHistory(asset.symbol, 3600, 240)
-                                client.requestHistory(asset.symbol, _strategy.value.timeframeSec, 240)
-                                client.requestHistory(asset.symbol, _strategy.value.higherTimeframeSec, 240)
+                                listOf(60, 300, 1800, 3600, _strategy.value.timeframeSec, _strategy.value.higherTimeframeSec)
+                                    .distinct().forEach { period -> client.requestHistory(asset.symbol, period, 240) }
                             }
                         }
                     }
