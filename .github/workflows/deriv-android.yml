@@ -1,0 +1,44 @@
+name: Build Deriv APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "TTTCML/Deriv/**"
+      - ".github/workflows/deriv-android.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Deriv debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Build Deriv debug APK
+        working-directory: TTTCML/Deriv
+        run: gradle --no-daemon --stacktrace assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deriv-debug-apk
+          path: TTTCML/Deriv/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
