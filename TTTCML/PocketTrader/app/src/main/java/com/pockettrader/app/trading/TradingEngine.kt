@@ -138,6 +138,41 @@ class TradingEngine(context: Context) {
     val candleHistory: StateFlow<List<Candle>> = _candleHistory
 
     init {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = database.dao()
+                AccountType.values().forEach { accountType ->
+                    dao.riskState(accountType.name)?.let { saved ->
+                        val restored = RiskState(
+                            dayKey = saved.dayKey,
+                            sessionTrades = saved.tradesToday,
+                            dailyPnl = (saved.dailyProfitMinor - saved.dailyLossMinor) / 100.0,
+                            consecutiveLosses = saved.consecutiveLosses,
+                            openTrades = saved.openTrades
+                        )
+                        riskManagers.getValue(accountType).restoreState(restored)
+                    }
+                }
+                val savedOrders = dao.recentOrders(1000)
+                synchronized(lock) {
+                    savedOrders.mapNotNull { it.signalId }.forEach { claimedSignalIds.add(it) }
+                }
+                _trades.value = savedOrders.mapNotNull { row ->
+                    runCatching {
+                        TradeRecord(
+                            requestId = row.orderId, dealId = row.brokerOrderId, asset = row.asset,
+                            direction = Direction.valueOf(row.direction), amount = row.stakeMinor / 100.0,
+                            expirySec = row.expirySeconds, isDemo = row.accountMode == AccountType.DEMO.name,
+                            source = if (row.signalId == null) TradeSource.MANUAL else TradeSource.TT,
+                            signalId = row.signalId, placedAtMs = row.submittedAt,
+                            status = TradeStatus.valueOf(row.executionStatus),
+                            netProfit = row.profitLossMinor?.div(100.0), entryPrice = row.entryPrice
+                        )
+                    }.getOrNull()
+                }
+                _riskState.value = riskManager.state
+            }.onFailure { log("Could not restore database state: " + (it.message ?: "unknown")) }
+        }
         scope.launch { client.events.collect { onEvent(it) } }
         scope.launch {
             var wasConnected = false
