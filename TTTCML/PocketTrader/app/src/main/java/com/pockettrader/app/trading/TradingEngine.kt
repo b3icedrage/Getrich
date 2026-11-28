@@ -919,7 +919,11 @@ class TradingEngine(context: Context) {
         if (_model.value == TradingModel.FOUR_AGENT) {
             val now = System.currentTimeMillis()
             val best = _signals.value.asSequence()
-                .filter { now - it.emittedAtMs in 0..MAX_TT_SIGNAL_AGE_MS && it.confluenceScore >= _minConfluence.value }
+                .filter { candidate ->
+                    now - candidate.emittedAtMs in 0..MAX_TT_SIGNAL_AGE_MS &&
+                        candidate.confluenceScore >= _minConfluence.value &&
+                        _trades.value.none { trade -> trade.signalId == candidate.id }
+                }
                 .sortedWith(compareByDescending<Signal> { it.confluenceScore }
                     .thenByDescending { _assets.value.firstOrNull { a -> a.symbol == it.asset }?.payout ?: 0 }
                     .thenByDescending { it.emittedAtMs })
