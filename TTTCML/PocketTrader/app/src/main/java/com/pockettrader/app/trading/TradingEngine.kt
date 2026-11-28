@@ -92,6 +92,8 @@ class TradingEngine(context: Context) {
     private val nemotron = NemotronClient()
     private val lock = Any()
     @Volatile private var backgroundReconnectEnabled = false
+    @Volatile private var restoreAutoAfterBackgroundRestart = false
+    private val backgroundPrefs by lazy { app.getSharedPreferences("pockettrader_background", Context.MODE_PRIVATE) }
 
     val connState: StateFlow<ConnState> = client.state
     private val _account = MutableStateFlow(AccountType.DEMO)   // always start on demo
@@ -392,9 +394,26 @@ class TradingEngine(context: Context) {
     fun resumeBackgroundConnection(accountName: String) {
         val wanted = runCatching { AccountType.valueOf(accountName) }.getOrDefault(AccountType.DEMO)
         if (_account.value != wanted) _account.value = wanted
+        // Restore automatic execution only for a previously enabled DEMO session.
+        // REAL mode always requires the user to enable Auto Trader again in-app.
+        restoreAutoAfterBackgroundRestart = wanted == AccountType.DEMO &&
+            backgroundPrefs.getBoolean("auto_enabled", false)
+        if (wanted != AccountType.DEMO) backgroundPrefs.edit().putBoolean("auto_enabled", false).apply()
         if (client.state.value == ConnState.DISCONNECTED || client.state.value == ConnState.AUTH_FAILED) {
             connect()?.let { log("Background reconnect blocked: $it") }
+        } else {
+            restoreAutoIfReady()
         }
+    }
+
+    private fun restoreAutoIfReady() {
+        if (!restoreAutoAfterBackgroundRestart || _auto.value) return
+        if (_account.value != AccountType.DEMO || connState.value != ConnState.CONNECTED) return
+        val tickAt = _lastTickAtMs.value
+        if (tickAt <= 0L || System.currentTimeMillis() - tickAt > MAX_TICK_AGE_MS || _balance.value == null) return
+        restoreAutoAfterBackgroundRestart = false
+        log("Restoring previously enabled Demo Auto Trader after background restart")
+        setAuto(true, "restored Demo session")
     }
 
     /** Caller (UI) must already have confirmed a switch to REAL. */
@@ -606,6 +625,7 @@ class TradingEngine(context: Context) {
             is PocketEvent.Balance -> {
                 val demoNow = _account.value == AccountType.DEMO
                 if (e.isDemo == null || e.isDemo == demoNow) _balance.value = e.amount
+                restoreAutoIfReady()
             }
             is PocketEvent.Assets -> {
                 val listed = e.assets.sortedWith(compareByDescending<Asset> { it.isActive }.thenByDescending { it.payout }.thenBy { it.name })
@@ -654,6 +674,7 @@ class TradingEngine(context: Context) {
                 }
                 synchronized(lock) { _candleHistory.value = signalEngine.ltf.candles }
                 _candleCount.value = signalEngine.ltf.candles.size to signalEngine.htf.candles.size
+                restoreAutoIfReady()
             }
             is PocketEvent.Opened -> onOpened(e.deal)
             is PocketEvent.OpenFailed -> onOpenFailed(e.failure.error, e.failure.asset)
@@ -895,8 +916,10 @@ class TradingEngine(context: Context) {
             log("Autotrader start blocked: percentage stake cannot be calculated safely")
             return
         }
+        if (!on) backgroundPrefs.edit().putBoolean("auto_enabled", false).apply()
         if (_auto.value == on) return
         _auto.value = on
+        if (on) backgroundPrefs.edit().putBoolean("auto_enabled", _account.value == AccountType.DEMO).apply()
         _autoStatus.value = if (on) "Running on ${_account.value}" else "Stopped" + (reason?.let { ": $it" } ?: "")
         log("Autotrader ${if (on) "STARTED on ${_account.value}" else "STOPPED"}${reason?.let { " ($it)" } ?: ""}")
         if (on) TradingService.start(app, _account.value)
