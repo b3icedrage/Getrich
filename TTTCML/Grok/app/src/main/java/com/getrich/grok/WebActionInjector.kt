@@ -44,6 +44,23 @@ return JSON.stringify({ok:true,reason:'User-approved click dispatched.'});
 })()
 """.trimIndent()
 
+    fun inspectType(action: VisionAction) = """
+(function(){
+${coords(action)}
+const el=document.elementFromPoint(px,py);
+if(!el) return JSON.stringify({ok:false,blocked:true,reason:'No field at the AI coordinates.'});
+const type=(el.getAttribute('type')||'').toLowerCase();
+const hint=((el.getAttribute('aria-label')||'')+' '+(el.getAttribute('placeholder')||'')+' '+(el.name||'')+' '+(el.parentElement?.innerText||'')).toLowerCase();
+if(type==='password'||type==='hidden'||/password|passcode|otp|2fa|verification|security code|credit card|cvv/.test(hint))
+ return JSON.stringify({ok:false,blocked:true,sensitive:true,reason:'Sensitive input is reserved for manual entry.'});
+if(/\\b(buy|sell|order|confirm|submit|place trade|place order|execute trade)\\b/i.test(hint))
+ return JSON.stringify({ok:false,blocked:true,orderRelated:true,reason:'Order-related input detected.'});
+if(!(['INPUT','TEXTAREA'].includes(el.tagName)||el.isContentEditable))
+ return JSON.stringify({ok:false,blocked:true,reason:'Target is not an editable text field.'});
+return JSON.stringify({ok:true,blocked:false});
+})()
+""".trimIndent()
+
     fun type(action: VisionAction): String {
         val text = JSONObject.quote(action.text)
         return """
