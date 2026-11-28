@@ -131,10 +131,10 @@ fun AppRoot(engine: TradingEngine) {
                             Text(when (model) { TradingModel.CLASSIC -> "CLASSIC ENGINE"; TradingModel.FOUR_AGENT -> "4-AGENT PIPELINE"; TradingModel.DONCHIAN_MOMENTUM -> "DONCHIAN MOMENTUM" }, color = if (model == TradingModel.FOUR_AGENT) Color(0xFF73E6C7) else if (model == TradingModel.DONCHIAN_MOMENTUM) Color(0xFFFFC76A) else Color(0xFF9CC7FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.height(7.dp))
-                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            SegmentedButton(selected = model == TradingModel.CLASSIC, onClick = { engine.switchModel(TradingModel.CLASSIC)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("1 · Classic", fontSize = 11.sp) }
-                            SegmentedButton(selected = model == TradingModel.FOUR_AGENT, onClick = { engine.switchModel(TradingModel.FOUR_AGENT)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("2 · Agents", fontSize = 11.sp) }
-                            SegmentedButton(selected = model == TradingModel.DONCHIAN_MOMENTUM, onClick = { engine.switchModel(TradingModel.DONCHIAN_MOMENTUM)?.let { message = it } }, shape = RoundedCornerShape(10.dp)) { Text("3 · Donchian", fontSize = 11.sp) }
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(selected = model == TradingModel.CLASSIC, onClick = { engine.switchModel(TradingModel.CLASSIC)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(0, 3)) { Text("1 · Classic", fontSize = 10.sp) }
+                            SegmentedButton(selected = model == TradingModel.FOUR_AGENT, onClick = { engine.switchModel(TradingModel.FOUR_AGENT)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(1, 3)) { Text("2 · Agents", fontSize = 10.sp) }
+                            SegmentedButton(selected = model == TradingModel.DONCHIAN_MOMENTUM, onClick = { engine.switchModel(TradingModel.DONCHIAN_MOMENTUM)?.let { message = it } }, shape = SegmentedButtonDefaults.itemShape(2, 3)) { Text("3 · Donchian", fontSize = 10.sp) }
                         }
                         Text(when (model) {
                             TradingModel.CLASSIC -> "Original multi-timeframe strategy and Classic risk settings"
