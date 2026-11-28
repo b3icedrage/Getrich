@@ -231,7 +231,6 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
 
             }
         }
-        VelaMarketPanel(candles = candles, asset = asset, timeframeSec = strategy.timeframeSec)
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, label = { Text("Amount") },
