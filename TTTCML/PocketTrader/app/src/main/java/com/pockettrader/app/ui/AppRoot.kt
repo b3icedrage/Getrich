@@ -216,7 +216,7 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } })
     }
 
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())) {
         if (conn != ConnState.CONNECTED) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Not connected", Modifier.weight(1f))
@@ -285,7 +285,7 @@ fun TradeScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(filter, { filter = it }, label = { Text("Search assets") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
             items(assets.filter { filter.isBlank() || it.name.contains(filter, true) || it.symbol.contains(filter, true) }, key = { it.symbol }) { a ->
                 val selected = a.symbol == asset
                 Card(
@@ -382,7 +382,7 @@ fun SignalsScreen(engine: TradingEngine) {
             dismissButton = { TextButton(onClick = { confirmRealAuto = false }) { Text("Cancel") } }
         )
     }
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF14243A))) {
@@ -529,7 +529,7 @@ fun SignalsScreen(engine: TradingEngine) {
         }
         Text("RECENT SIGNALS", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         if (recent.isEmpty()) Text("No signals yet. Generate one for the selected pair.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-        else LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(recent.take(10), key = { it.id }) { s ->
                 Card(Modifier.fillMaxWidth()) {
                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -636,7 +636,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
         )
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("TT · TOP SIGNALS", fontWeight = FontWeight.Black, fontSize = 18.sp)
@@ -657,7 +657,7 @@ fun TTScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 600.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(ranked, key = { it.id }) { signal ->
                     val qualified = signal.confluenceScore >= threshold
                     val eligible = qualified && eligibleSignals.any { it.id == signal.id }
@@ -976,7 +976,7 @@ fun ChatScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
     var apiKey by rememberSaveable { mutableStateOf("") }
     var prompt by rememberSaveable { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("NEMOTRON AI CHAT", fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -999,7 +999,7 @@ fun ChatScreen(engine: TradingEngine, onMessage: (String) -> Unit) {
                 TextButton(onClick = { engine.clearNvidiaApiKey() }) { Text("Remove key") }
             }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(messages) { item ->
                 val user = item.role == "user"
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
@@ -1044,7 +1044,7 @@ fun LogScreen(engine: TradingEngine) {
         }
         Text("Signal journal: ${journal.size} records · includes reference/entry price, expiry, broker result and net return", fontSize = 11.sp, color = Color.Gray)
         Row { FilterChip(!showEvents, { showEvents = false }, { Text("Trades") }); Spacer(Modifier.width(8.dp)); FilterChip(showEvents, { showEvents = true }, { Text("Events") }) }
-        LazyColumn {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
             if (!showEvents) items(trades, key = { it.requestId }) { t ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Column(Modifier.weight(1f)) {
