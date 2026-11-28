@@ -59,23 +59,26 @@ class SignalEngine(cfg: StrategyConfig) {
 
     /** Returns a signal when this tick closed a signal candle and the strategy fired. */
     fun onTick(asset: String, tsSec: Double, price: Double, nowMs: Long): Signal? {
+        // Feed each independent aggregator exactly once; keep the selected chart timeframe warm.
+        ltf.onTick(tsSec, price)
         htf.onTick(tsSec, price)
-        m1.onTick(tsSec, price)
+        val closed = m1.onTick(tsSec, price)
         m5.onTick(tsSec, price)
         m30.onTick(tsSec, price)
         h1.onTick(tsSec, price)
-        val closed = m1.onTick(tsSec, price) ?: return null
+        if (closed == null) return null
         return evaluate(asset, closed, nowMs)
     }
 
     /** Clock-driven close so the signal is emitted at the boundary even with no new tick. */
     fun onClock(asset: String, serverNowSec: Double, nowMs: Long): Signal? {
+        ltf.onClock(serverNowSec)
         htf.onClock(serverNowSec)
-        m1.onClock(serverNowSec)
+        val closed = m1.onClock(serverNowSec)
         m5.onClock(serverNowSec)
         m30.onClock(serverNowSec)
         h1.onClock(serverNowSec)
-        val closed = m1.onClock(serverNowSec) ?: return null
+        if (closed == null) return null
         return evaluate(asset, closed, nowMs)
     }
 
