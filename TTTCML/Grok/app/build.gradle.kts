@@ -5,7 +5,19 @@ plugins {
 android {
  namespace = "com.getrich.grok"
  compileSdk = 34
- defaultConfig { applicationId = "com.getrich.grok"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0.0" }
+ defaultConfig { applicationId = "com.getrich.grok"; minSdk = 24; targetSdk = 34; versionCode = 2; versionName = "1.1.0" }
+ signingConfigs {
+  create("stable") {
+   storeFile = file(System.getenv("GROK_KEYSTORE_PATH") ?: "grok-upload-key.jks")
+   storePassword = System.getenv("GROK_KEYSTORE_PASSWORD")
+   keyAlias = "grok-release"
+   keyPassword = System.getenv("GROK_KEYSTORE_PASSWORD")
+  }
+ }
+ buildTypes {
+  debug { signingConfig = signingConfigs.getByName("stable") }
+  release { signingConfig = signingConfigs.getByName("stable"); isMinifyEnabled = false }
+ }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
  buildFeatures { compose = true }
