@@ -4,6 +4,9 @@ import android.content.Context
 import com.pockettrader.app.Notifier
 import com.pockettrader.app.TradingService
 import com.pockettrader.app.data.SecureStore
+import com.pockettrader.app.data.PocketTraderDatabase
+import com.pockettrader.app.data.SignalEntity
+import com.pockettrader.app.data.SignalComponentEntity
 import com.pockettrader.app.protocol.Candle
 import com.pockettrader.app.analytics.analyseTechnicalMarket
 import org.json.JSONObject
@@ -76,6 +79,7 @@ data class SignalAuditRecord(
 class TradingEngine(context: Context) {
     private val app = context.applicationContext
     val store = SecureStore(app)
+    private val database = PocketTraderDatabase.get(app)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val client = PocketClient(scope)
     private val nemotron = NemotronClient()
@@ -164,6 +168,26 @@ class TradingEngine(context: Context) {
     }
 
     private fun dayKey(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+
+    private fun persistSignal(signal: Signal) {
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val dao = database.dao()
+                dao.upsertSignal(SignalEntity(
+                    signalId = signal.id, asset = signal.asset, direction = signal.direction.name,
+                    strategy = signal.strategy.name, reason = signal.reason, entryAtSec = signal.entryAtSec,
+                    expirySeconds = signal.expirySec, confluenceScore = signal.confluenceScore,
+                    accountMode = _account.value.name, status = "GENERATED", createdAt = signal.emittedAtMs,
+                    expiresAt = (signal.entryAtSec + signal.expirySec) * 1000L
+                ))
+                dao.upsertSignalComponents(listOf(
+                    SignalComponentEntity(signalId = signal.id, component = "MTF_TOTAL",
+                        direction = signal.direction.name, rawScore = signal.confluenceScore.toDouble(),
+                        maximumScore = 100.0, explanation = signal.reason)
+                ))
+            }.onFailure { log("Database signal write failed: " + (it.message ?: "unknown")) }
+        }
+    }
 
     // ---------------- sessions / connection ----------------
 
@@ -637,6 +661,7 @@ class TradingEngine(context: Context) {
             else (listOf(SignalAuditRecord(signal, _account.value, signal.referencePrice)) + rows).take(1000)
         }
         persistSignalJournal()
+        persistSignal(signal)
     }
 
     private fun updateSignalAudit(id: Long, change: (SignalAuditRecord) -> SignalAuditRecord) {
