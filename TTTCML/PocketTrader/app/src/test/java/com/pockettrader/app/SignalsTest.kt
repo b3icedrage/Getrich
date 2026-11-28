@@ -52,6 +52,19 @@ class SignalsTest {
         assertEquals(Direction.PUT, Strategies.meanReversion(cfg, pump)?.direction)
     }
 
+    @Test fun donchianMomentumRequiresBreakoutAndBothOscillatorsAligned() {
+        val base = (0 until 65).map { i ->
+            val p = 100.0 + i * 0.05
+            c(i, p - 0.02, p + 0.10, p - 0.10, p)
+        }
+        val breakout = base + c(65, 103.2, 104.0, 103.1, 103.9)
+        assertEquals(Direction.CALL, Strategies.donchianMomentum(breakout)?.direction)
+        val noBreakout = base + c(65, 103.0, 103.2, 102.9, 103.0)
+        assertNull(Strategies.donchianMomentum(noBreakout))
+        val tooShort = base.take(50)
+        assertNull(Strategies.donchianMomentum(tooShort))
+    }
+
     @Test fun breakoutNeedsVolume() {
         val base = flat(25)
         val cfg = StrategyConfig(type = StrategyType.BREAKOUT)
