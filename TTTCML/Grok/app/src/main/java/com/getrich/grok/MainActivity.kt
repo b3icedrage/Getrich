@@ -148,16 +148,28 @@ private fun GrokScreen() {
                         when (decision.action) {
                             "wait" -> log("No browser action taken.")
                             "type" -> {
-                                val elapsed = SystemClock.elapsedRealtime() - lastActionAt
-                                if (elapsed < 2_000L) delay(2_000L - elapsed)
-                                val result = decodeJs(evaluate(web, WebActionInjector.type(decision)))
-                                lastActionAt = SystemClock.elapsedRealtime()
-                                if (decision.isOrderSubmission || result.optBoolean("blocked")) {
-                                    pending = PendingAction(decision, shot, result.optString("reason", decision.reason))
+                                if (decision.isOrderSubmission) {
+                                    pending = PendingAction(decision, shot, decision.reason)
                                     aiMode = false
                                     vibrate()
-                                    log("Sensitive action paused for your approval.")
-                                } else log(result.optString("reason", "Type action processed."))
+                                    log("Model flagged this as an order-related action. Paused before typing.")
+                                } else {
+                                    val preflight = decodeJs(evaluate(web, WebActionInjector.inspectType(decision)))
+                                    if (preflight.optBoolean("orderRelated")) {
+                                        pending = PendingAction(decision, shot, preflight.optString("reason", decision.reason))
+                                        aiMode = false
+                                        vibrate()
+                                        log("Order-related field detected. Paused before typing.")
+                                    } else if (preflight.optBoolean("blocked")) {
+                                        log("Typing blocked: " + preflight.optString("reason", "Unsafe input field."))
+                                    } else {
+                                        val elapsed = SystemClock.elapsedRealtime() - lastActionAt
+                                        if (elapsed < 2_000L) delay(2_000L - elapsed)
+                                        val result = decodeJs(evaluate(web, WebActionInjector.type(decision)))
+                                        lastActionAt = SystemClock.elapsedRealtime()
+                                        log(result.optString("reason", "Type action processed."))
+                                    }
+                                }
                             }
                             "click" -> {
                                 val elapsed = SystemClock.elapsedRealtime() - lastActionAt
