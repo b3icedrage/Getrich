@@ -83,6 +83,7 @@ data class ExecutedOrderEntity(
     val asset: String,
     val direction: String,
     val accountMode: String,
+    val tradingModel: String = "CLASSIC",
     val stakeMinor: Long,
     val entryPrice: Double?,
     val exitPrice: Double?,
@@ -182,13 +183,18 @@ interface PocketTraderDao {
         PerformanceAnalyticsEntity::class,
         RiskStateEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class PocketTraderDatabase : RoomDatabase() {
     abstract fun dao(): PocketTraderDao
 
     companion object {
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE executed_orders ADD COLUMN tradingModel TEXT NOT NULL DEFAULT 'CLASSIC'")
+            }
+        }
         @Volatile private var INSTANCE: PocketTraderDatabase? = null
 
         fun get(context: Context): PocketTraderDatabase =
@@ -197,7 +203,7 @@ abstract class PocketTraderDatabase : RoomDatabase() {
                     context.applicationContext,
                     PocketTraderDatabase::class.java,
                     "pockettrader.db"
-                ).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
             }
     }
 }
